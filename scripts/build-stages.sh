@@ -80,12 +80,16 @@ import os
 p = pathlib.Path(os.environ['LP_ROOT'])/'work/rhwp/rhwp-studio/index.html'
 s = p.read_text(encoding='utf-8')
 anchor = '  <script src="/theme-init.js"></script>\n'
-assert '/locale-init.js' not in s and anchor in s
+if '/locale-init.js' in s:
+    raise SystemExit(0)   # 1단계가 상류에 머지돼 이미 있다
+assert anchor in s
 s = s.replace(anchor, anchor + '  <!-- 언어팩: 번들 전에 <html lang> 을 고른 로케일로 — 영어 사용자의 첫 페인트 깜빡임 방지 -->\n  <script src="/locale-init.js"></script>\n', 1)
 p.write_text(s, encoding='utf-8')
 PY
 filter_locales 1
-$G add -A && $G commit -q -F $TMP/msg1.txt
+# 이미 상류에 머지된 단계는 바뀐 것이 없다 — 빈 커밋을 만들지 않고 넘어간다(1단계는 PR #7142 로 머지됨).
+$G add -A
+if git -C $W diff --cached --quiet; then echo "1단계: 변경 없음(이미 devel 에 반영)"; else $G commit -q -F $TMP/msg1.txt; fi
 echo "1단계 커밋: $(git -C $W rev-parse --short HEAD)"
 
 # ---- 2단계: 메뉴·툴바 ----
@@ -93,7 +97,9 @@ git -C $W checkout -q -B i18n/2-menus   # 앞 단계 커밋 위에 새 가지 �
 git -C $W checkout -q tmp/full -- rhwp-studio/index.html rhwp-studio/src/styles/style-bar.css
 filter_locales 2
 sh $R/scripts/stage-tests.sh 2 $TMP/stage-cat/ko.json | tail -1
-$G add -A && $G commit -q -F $TMP/msg2.txt
+# 이미 상류에 머지된 단계는 바뀐 것이 없다 — 빈 커밋을 만들지 않고 넘어간다(1단계는 PR #7142 로 머지됨).
+$G add -A
+if git -C $W diff --cached --quiet; then echo "2단계: 변경 없음(이미 devel 에 반영)"; else $G commit -q -F $TMP/msg2.txt; fi
 echo "2단계 커밋: $(git -C $W rev-parse --short HEAD)"
 
 # ---- 3단계: 대화상자 ----
@@ -101,7 +107,9 @@ git -C $W checkout -q -B i18n/3-dialogs   # 앞 단계 커밋 위에 새 가지 
 git -C $W checkout -q tmp/full -- rhwp-studio/src/ui
 filter_locales 3
 sh $R/scripts/stage-tests.sh 3 $TMP/stage-cat/ko.json | tail -1
-$G add -A && $G commit -q -F $TMP/msg3.txt
+# 이미 상류에 머지된 단계는 바뀐 것이 없다 — 빈 커밋을 만들지 않고 넘어간다(1단계는 PR #7142 로 머지됨).
+$G add -A
+if git -C $W diff --cached --quiet; then echo "3단계: 변경 없음(이미 devel 에 반영)"; else $G commit -q -F $TMP/msg3.txt; fi
 echo "3단계 커밋: $(git -C $W rev-parse --short HEAD)"
 
 # ---- 4단계: 명령 레지스트리 ----
@@ -110,7 +118,9 @@ git -C $W checkout -q tmp/full -- rhwp-studio/src/command/commands
 python3 $R/scripts/write-catalog-ts.py $CAT/ko.json $ST/src/i18n/locales/ko.ts ko >/dev/null
 python3 $R/scripts/write-catalog-ts.py $CAT/en.json $ST/src/i18n/locales/en.ts en >/dev/null
 sh $R/scripts/stage-tests.sh 4 $CAT/ko.json | tail -1
-$G add -A && $G commit -q -F $TMP/msg4.txt
+# 이미 상류에 머지된 단계는 바뀐 것이 없다 — 빈 커밋을 만들지 않고 넘어간다(1단계는 PR #7142 로 머지됨).
+$G add -A
+if git -C $W diff --cached --quiet; then echo "4단계: 변경 없음(이미 devel 에 반영)"; else $G commit -q -F $TMP/msg4.txt; fi
 echo "4단계 커밋: $(git -C $W rev-parse --short HEAD)"
 
 # ---- 검증: 4단계 트리 == 전체 스냅샷 ----

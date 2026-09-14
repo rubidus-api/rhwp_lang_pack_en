@@ -33,6 +33,8 @@ def main():
     stripped = ATTR.sub('', current)
     for line in INTENDED_LINES:
         stripped = stripped.replace(line, '', 1)
+        # 1단계가 상류에 머지된 뒤에는 원본에도 이 줄이 있다. 양쪽에서 똑같이 뺀다.
+        original = original.replace(line, '', 1)
     if stripped == original:
         print(f'표시 제거 후 원본과 동일: ok (의도한 추가 줄 {len(INTENDED_LINES)}개 제외)')
     else:

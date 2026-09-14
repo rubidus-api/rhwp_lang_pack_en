@@ -61,6 +61,8 @@ def main():
     for old, new in pairs:
         # 못 찾으면 멈춘다. 조용히 지나가면 상류가 그 코드를 고친 순간 번역이 사라진다
         # (2026-09-14 머리말/꼬리말 표시가 그렇게 빠졌다 — LESSONS '단정 없는 치환').
+        if new in s:
+            continue    # 상류에 이미 반영됨(1단계는 PR #7142 로 머지). 치환 결과가 원문을 품는 규칙(import 추가)도 있어 결과부터 본다
         if s.count(old) != 1:
             raise SystemExit(f'apply-extras: main.ts 에서 기대한 코드가 {s.count(old)}번 나온다(1번이어야 함) — 상류가 바꿨다:\n  {old}')
         s = s.replace(old, new); n += 1
@@ -105,6 +107,8 @@ def main():
         fp = studio / rel
         text = fp.read_text(encoding='utf-8')
         for old, new in file_pairs:
+            if new in text:
+                continue    # 상류에 이미 반영됨 — 결과부터 본다(결과가 원문을 품는 import 추가 규칙이 두 번 들어간 적이 있다)
             if text.count(old) != 1:
                 raise SystemExit(f'apply-extras: {rel} 에서 기대한 코드가 {text.count(old)}번 나온다(1번이어야 함):\n  {old}')
             text = text.replace(old, new)
@@ -218,6 +222,8 @@ html[lang='en'] .sb-field-grid {
         fp = studio / rel
         text = fp.read_text(encoding='utf-8')
         for old, new in file_pairs:
+            if new in text:
+                continue    # 상류에 이미 반영됨 — 결과부터 본다(결과가 원문을 품는 import 추가 규칙이 두 번 들어간 적이 있다)
             if text.count(old) != 1:
                 raise SystemExit(f'apply-extras: {rel} 에서 기대한 코드가 {text.count(old)}번 나온다(1번이어야 함):\n  {old}')
             text = text.replace(old, new)
@@ -252,6 +258,8 @@ html[lang='en'] .sb-field-grid {
         if 'locale-init.js' in text:
             continue
         for old, new in file_pairs:
+            if new in text:
+                continue    # 상류에 이미 반영됨 — 결과부터 본다(결과가 원문을 품는 import 추가 규칙이 두 번 들어간 적이 있다)
             if text.count(old) != 1:
                 raise SystemExit(f'apply-extras: {rel} 에서 기대한 코드가 {text.count(old)}번 나온다(1번이어야 함):\n  {old}')
             text = text.replace(old, new)
