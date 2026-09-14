@@ -225,6 +225,39 @@ html[lang='en'] .sb-field-grid {
     ko.update({'ui.sbPage.text': '{p1} / {p2} 쪽'})
     report.append('쪽 표시')
 
+    # 4a. 브라우저 확장 빌드 — vite publicDir:false 라 public/ 파일을 직접 복사한다. locale-init.js 를
+    # 빠뜨리면 확장 viewer.html 이 없는 스크립트를 가리킨다(상류 메인테이너가 PR #7142 에서 보정, 0308b476b).
+    repo = studio.parent
+    theme_copy = "copy(resolve(ROOT, 'rhwp-studio', 'public', 'theme-init.js'), resolve(DIST, 'theme-init.js'));\n"
+    locale_copy = ("// 언어 선택도 번들 전 동기 실행한다(publicDir:false이므로 직접 포함).\n"
+                   "copy(resolve(ROOT, 'rhwp-studio', 'public', 'locale-init.js'), resolve(DIST, 'locale-init.js'));\n")
+    ext_pairs = {
+        'rhwp-chrome/build.mjs': ((theme_copy, theme_copy + locale_copy),
+                                  ("  'theme-init.js',\n", "  'theme-init.js',\n  'locale-init.js',\n")),
+        'rhwp-firefox/build.mjs': ((theme_copy, theme_copy + locale_copy),
+                                   ("  'theme-init.js',\n", "  'theme-init.js',\n  'locale-init.js',\n")),
+        'scripts/frontend-extension-dist.test.mjs': ((
+            "    assertInlineScriptDetectorRejectsMalformedEndTags();\n\n",
+            "    assertInlineScriptDetectorRejectsMalformedEndTags();\n\n"
+            "    assert.match(viewerHtml, /<script\\s+src=\"(?:\\.\\/|\\/)?locale-init\\.js\"><\\/script>/);\n"
+            "    assert.equal(\n"
+            "      readFileSync(path.join(distDir, 'locale-init.js'), 'utf8'),\n"
+            "      readFileSync(path.join(ROOT, 'rhwp-studio/public/locale-init.js'), 'utf8'),\n"
+            "      'locale bootstrap must be copied unchanged into each extension',\n"
+            "    );\n\n"),),
+    }
+    for rel, file_pairs in ext_pairs.items():
+        fp = repo / rel
+        text = fp.read_text(encoding='utf-8')
+        if 'locale-init.js' in text:
+            continue
+        for old, new in file_pairs:
+            if text.count(old) != 1:
+                raise SystemExit(f'apply-extras: {rel} 에서 기대한 코드가 {text.count(old)}번 나온다(1번이어야 함):\n  {old}')
+            text = text.replace(old, new)
+        fp.write_text(text, encoding='utf-8')
+    report.append('확장 빌드 locale-init 3파일')
+
     # 4. locale-init
     p = studio / 'index.html'
     s = p.read_text(encoding='utf-8')

@@ -89,7 +89,7 @@ function setOwnText(el: HTMLElement, value: string): void {
   }
   const meaningful = texts.filter((node) => (node.nodeValue ?? '').trim() !== '');
   if (meaningful.length === 0) {
-    el.textContent = value;
+    el.appendChild(el.ownerDocument.createTextNode(value));
     return;
   }
   meaningful[0].nodeValue = value;

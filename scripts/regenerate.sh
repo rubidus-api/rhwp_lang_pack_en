@@ -19,7 +19,8 @@ echo "== 0. 상류 원본으로 되돌림 + 언어팩 런타임(overlay) 얹기"
 git -C "$repo" checkout -q origin/devel -- rhwp-studio/index.html rhwp-studio/src/ui rhwp-studio/src/command \
   rhwp-studio/tests rhwp-studio/src/main.ts rhwp-studio/src/styles/style-bar.css \
   rhwp-studio/src/engine/header-footer-mode.ts rhwp-studio/src/view/canvas-view.ts \
-  rhwp-studio/src/view/page-indicator.ts
+  rhwp-studio/src/view/page-indicator.ts \
+  rhwp-chrome/build.mjs rhwp-firefox/build.mjs scripts/frontend-extension-dist.test.mjs
 printf '{\n}\n' > "$catalog/ko.json"
 # 언어팩 런타임(src/i18n·locale-init·i18n 테스트)은 overlay/ 가 정본이다. 상류 트리에 그대로 얹는다.
 cp -R "$root/overlay/rhwp-studio/." "$studio/"

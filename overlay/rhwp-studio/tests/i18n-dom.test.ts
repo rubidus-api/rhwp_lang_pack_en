@@ -197,3 +197,17 @@ test('앱이 바꿔 둔 여러 줄 라벨도 그대로 둔다', () => {
     assert.deepEqual(el.childNodes.map((n) => n.nodeValue ?? `<${n.tagName}>`), ['붙여', '<br>', '넣기']);
   });
 });
+
+
+test('직계 텍스트 없이 아이콘만 있는 요소도 자식을 보존한다', () => {
+  withCatalogs({ 'menu.file.open': '열기' }, { 'menu.file.open': 'Open' }, () => {
+    const icon = elementNode('span');
+    const el = fakeElement({ 'data-i18n': 'menu.file.open' }, [textNode('  '), icon]);
+    applyI18nToElement(el as never);
+    assert.equal(el.childNodes[1], icon);
+    assert.equal(el.textContent.trim(), 'Open');
+    applyI18nToElement(el as never);
+    assert.equal(el.childNodes[1], icon);
+    assert.equal(el.textContent.trim(), 'Open');
+  });
+});

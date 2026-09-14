@@ -24,7 +24,8 @@ if ! git -C $W merge-base --is-ancestor "$BASE" HEAD; then
   echo "build-stages: 작업 트리가 origin/devel($BASE) 위에 있지 않다 — 새 devel 로 트리를 세운 뒤 regenerate 할 것" >&2
   exit 1
 fi
-$G add -A rhwp-studio
+# rhwp-studio 밖에서 바꾸는 파일(확장 빌드)도 스냅샷에 담는다 — 빠뜨리면 4단계 불변식이 같이 속는다.
+$G add -A rhwp-studio rhwp-chrome/build.mjs rhwp-firefox/build.mjs scripts/frontend-extension-dist.test.mjs
 $G commit -q -m "tmp: full stage-4 tree on new devel" || true
 FULL=$(git -C $W rev-parse tmp/full)
 echo "tmp/full = $FULL"
@@ -67,6 +68,7 @@ git -C $W checkout -q tmp/full -- \
   rhwp-studio/src/i18n/index.ts rhwp-studio/src/i18n/resolve.ts \
   rhwp-studio/public/locale-init.js rhwp-studio/src/main.ts \
   rhwp-studio/src/engine/header-footer-mode.ts rhwp-studio/src/view/canvas-view.ts rhwp-studio/src/view/page-indicator.ts \
+  rhwp-chrome/build.mjs rhwp-firefox/build.mjs scripts/frontend-extension-dist.test.mjs \
   rhwp-studio/tests/i18n-core.test.ts rhwp-studio/tests/i18n-dom.test.ts \
   rhwp-studio/tests/i18n-locale-init.test.ts rhwp-studio/tests/i18n-resolve.test.ts \
   rhwp-studio/tests/i18n-preference.test.ts \
