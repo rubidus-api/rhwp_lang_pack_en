@@ -1,0 +1,14 @@
+{
+  "_설명": "check-comparisons.py 가 지적했으나 사람이 확인해 안전하다고 판정한 자리. 판정 근거를 함께 남긴다.",
+  "compare-dialog.ts:(없음)": "이 파일이 스스로 '(없음)' 을 만들어(return·??) 스스로 비교한다. 두 자리 다 옮기지 않았으므로 영어 화면에서도 양쪽이 같다. 같은 글자를 가진 카탈로그 키는 numbering 대화상자의 것이라 이 흐름과 닿지 않는다.",
+  "compare-dialog.ts:속성 변경": "위와 같다.",
+  "compare-dialog.ts:텍스트 변경": "위와 같다.",
+  "compare-result-window.ts:(없음)": "위와 같다 — 생산과 비교가 같은 파일 안에서 닫혀 있다.",
+  "equation-props-dialog.ts:기본": "TAB_NAMES 는 타입 리터럴(type TabName)이자 비교 대상이라 옮기지 않았다. 탭 라벨과 비교가 모두 한국어로 남아 짝이 맞는다. 옮기려면 상류가 탭을 id 로 가르도록 고쳐야 한다 — 그건 우리가 조용히 결정할 일이 아니다.",
+  "equation-props-dialog.ts:여백/캡션": "위와 같다.",
+  "history-dialog.ts:(없음)": "위와 같다.",
+  "history-dialog.ts:속성 변경": "위와 같다.",
+  "history-dialog.ts:텍스트 변경": "item.title 은 이 파일이 만든 문자열이고 옮기지 않았다.",
+  "table.ts:표 크기": "err.message 에 '표 크기'·'초과' 가 있는지 본다 — 이 message 는 Rust(wasm) 가 던지는 오류 문자열이지 우리가 옮긴 대화상자 안내문('※ 표 크기는 읽기 전용입니다…')이 아니다. Rust 쪽은 건드리지 않았으므로 영어 화면에서도 그 오류 문자열은 한국어 그대로 오고, 비교는 그대로 참이다. (2026-08-22)",
+  "toolbar.ts:대표 글꼴": "querySelector('optgroup[label=\"대표 글꼴\"]') 가 찾는 optgroup 의 label 은 `.label =` 대입으로 붙는데, 그 자리는 옮기는 대상이 아니다(SAFE 목록에 없다). 양쪽이 한국어로 남아 짝이 맞는다."
+}
