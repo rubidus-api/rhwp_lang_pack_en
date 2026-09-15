@@ -15,15 +15,29 @@ helpers="$root/build/display-helpers.tsv"
 [ -d "$studio" ] || { echo "regenerate: 작업 사본이 없다 — 먼저 sh scripts/setup-work.sh"; exit 1; }
 mkdir -p "$root/build" "$catalog"
 
+# 메인테이너가 PR 가지에 올린 보정(overlay/patches/*.patch)을 정본에 흡수한다. 이미 상류에 들어갔으면 건너뛴다.
+apply_patch() {
+  if git -C "$repo" apply --reverse --check "$1" 2>/dev/null; then
+    echo "   $(basename "$1"): 이미 반영됨"
+  elif git -C "$repo" apply "$1"; then
+    echo "   $(basename "$1"): 적용"
+  else
+    echo "regenerate: 패치 $(basename "$1") 가 맞지 않는다 — 상류가 그 자리를 바꿨는지 볼 것" >&2
+    exit 1
+  fi
+}
+
 echo "== 0. 상류 원본으로 되돌림 + 언어팩 런타임(overlay) 얹기"
 git -C "$repo" checkout -q origin/devel -- rhwp-studio/index.html rhwp-studio/src/ui rhwp-studio/src/command \
   rhwp-studio/tests rhwp-studio/src/main.ts rhwp-studio/src/styles/style-bar.css \
   rhwp-studio/src/engine/header-footer-mode.ts rhwp-studio/src/view/canvas-view.ts \
-  rhwp-studio/src/view/page-indicator.ts \
+  rhwp-studio/src/view/page-indicator.ts rhwp-studio/e2e/responsive.test.mjs \
   rhwp-chrome/build.mjs rhwp-firefox/build.mjs scripts/frontend-extension-dist.test.mjs
 printf '{\n}\n' > "$catalog/ko.json"
 # 언어팩 런타임(src/i18n·locale-init·i18n 테스트)은 overlay/ 가 정본이다. 상류 트리에 그대로 얹는다.
 cp -R "$root/overlay/rhwp-studio/." "$studio/"
+# PR #7152 메인테이너 보정 e917cffb9 중 변환 전에 들어가야 하는 부분(변환기가 파일 머리에 import 를 넣으면 문맥이 어긋난다)
+apply_patch "$root/overlay/patches/pr7152-e917cffb9-pre.patch"
 
 echo "== 1. 도우미 판정"
 python3 "$root/scripts/verify-helpers.py" "$studio/src/ui" "$helpers" > "$root/build/step-1.log"
@@ -41,6 +55,8 @@ head -1 "$root/build/step-5.log"
 
 echo "== 3. 손 조정(main.ts·재키잉·css·locale-init)"
 python3 "$root/scripts/apply-extras.py" "$studio" "$catalog/ko.json"
+# 같은 보정의 CSS 부분 — apply-extras 가 붙인 영어 폭 보정 블록까지 고치므로 그 뒤에 적용한다
+apply_patch "$root/overlay/patches/pr7152-e917cffb9-css.patch"
 
 echo "== 4. 번역 → 카탈로그 .ts"
 # 파이프 뒤 grep 이 앞 명령의 실패를 삼키지 않게 출력은 파일로 받는다(거짓 'ok' 를 낸 적이 있다).

@@ -94,7 +94,12 @@ echo "1단계 커밋: $(git -C $W rev-parse --short HEAD)"
 
 # ---- 2단계: 메뉴·툴바 ----
 git -C $W checkout -q -B i18n/2-menus   # 앞 단계 커밋 위에 새 가지 — 빠뜨리면 네 커밋이 1단계 가지에 쌓인다
-git -C $W checkout -q tmp/full -- rhwp-studio/index.html rhwp-studio/src/styles/style-bar.css
+git -C $W checkout -q tmp/full -- rhwp-studio/index.html rhwp-studio/src/styles/style-bar.css rhwp-studio/e2e/responsive.test.mjs
+# PR #7152 메인테이너 보정 e917cffb9 는 src/ui/style-toolbar-overflow.ts 도 고친다. 그 파일의 문자열 변환은 3단계라
+# 2단계에는 보정만 얹는다(3단계가 tmp/full 의 src/ui 를 가져오면 보정+변환이 된다).
+if ! git -C $W apply --reverse --check $R/overlay/patches/pr7152-e917cffb9-pre.patch 2>/dev/null; then
+  git -C $W apply --include='rhwp-studio/src/ui/*' $R/overlay/patches/pr7152-e917cffb9-pre.patch
+fi
 filter_locales 2
 sh $R/scripts/stage-tests.sh 2 $TMP/stage-cat/ko.json | tail -1
 # 이미 상류에 머지된 단계는 바뀐 것이 없다 — 빈 커밋을 만들지 않고 넘어간다(1단계는 PR #7142 로 머지됨).
