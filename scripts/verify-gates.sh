@@ -26,10 +26,23 @@ echo "발자국: Rust·빌드설정·CI 무접촉 ok"
 for branch in $branches; do
   echo "== $branch"
   git -C "$repo" checkout -q "$branch"
-  (cd "$studio" && npx tsc --project tsconfig.ci-unit.json --noEmit) && echo "   ci-unit typecheck ok"
-  npm --prefix "$studio" run test 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^ℹ (pass|fail)' | tr '\n' ' ' | sed 's/^/   test: /'
+  log=$(echo "$branch" | tr / -)
+  # `명령 && echo ok` 는 set -e 로 멈추지 않는다 — 실패를 출력만 하고 초록으로 끝난 적이 있다.
+  (cd "$studio" && npx tsc --project tsconfig.ci-unit.json --noEmit) > "$root/build/tsc-$log.log" 2>&1 \
+    || { cat "$root/build/tsc-$log.log" >&2; echo "verify-gates: $branch 타입검사 실패" >&2; exit 1; }
+  echo "   ci-unit typecheck ok"
+  status=0
+  npm --prefix "$studio" run test > "$root/build/test-$log.log" 2>&1 || status=$?
+  sed 's/\x1b\[[0-9;]*m//g' "$root/build/test-$log.log" | grep -E '^ℹ (pass|fail)' | tr '\n' ' ' | sed 's/^/   test: /'
   echo
-  npm --prefix "$studio" run build > "$root/build/build-$(echo "$branch" | tr / -).log" 2>&1 && echo "   build(tsc+vite) ok"
+  if [ "$status" -ne 0 ]; then
+    sed 's/\x1b\[[0-9;]*m//g' "$root/build/test-$log.log" | grep -E '^not ok|✖' | head -10 >&2
+    echo "verify-gates: $branch 테스트 실패" >&2
+    exit 1
+  fi
+  npm --prefix "$studio" run build > "$root/build/build-$log.log" 2>&1 \
+    || { tail -20 "$root/build/build-$log.log" >&2; echo "verify-gates: $branch 빌드 실패" >&2; exit 1; }
+  echo "   build(tsc+vite) ok"
 done
 
 echo

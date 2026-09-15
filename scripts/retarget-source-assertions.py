@@ -35,6 +35,18 @@ def source_var(target):
     return inner.group(1) if inner else target
 
 
+def still_passes(kind, pattern):
+    """원래 단정(match/doesNotMatch)이 지금 소스에서도 통과하나 — JS 정규식을 파이썬으로 그대로 돌려 본다.
+    못 옮기는 꼴이면 None('문구가 있나' 로 돌아간다)."""
+    try:
+        compiled = re.compile(pattern)
+    except re.error:
+        return None
+    if kind == 'doesNotMatch':
+        return lambda content: not compiled.search(content)
+    return lambda content: bool(compiled.search(content))
+
+
 def plain_text(pattern):
     r"""정규식이 사실상 리터럴이면 그 글자를 낸다. 아니면 None.
 
@@ -52,8 +64,12 @@ def plain_text(pattern):
     return re.sub('\x01(\\d+)\x01', r'{p\1}', unescaped)
 
 
-def source_has_text(test_path, target_var, text):
-    """테스트가 읽어 <target_var> 에 담은 소스 파일에 그 문구가 아직 있나. 못 찾으면 '있다' (보수적)."""
+def source_has_text(test_path, target_var, text, found=None):
+    """테스트가 읽어 <target_var> 에 담은 소스 파일에 그 문구가 아직 있나. 못 찾으면 '있다' (보수적).
+
+    found 를 주면 '문구가 있나' 대신 그 판정(소스 → bool)으로 묻는다.
+    """
+    found = found or (lambda content: text in content)
     src = test_path.read_text(encoding='utf-8')
     m = re.search(re.escape(target_var) + r"""\s*=\s*(?:await\s+)?\w+\(\s*(?:new URL\(\s*|join\([^,]+,\s*)?['"]([^'"]+\.(?:ts|html|css))['"]""", src)
     if not m:
@@ -69,14 +85,14 @@ def source_has_text(test_path, target_var, text):
                     break
         if not contents:
             return True
-        return any(text in content for content in contents)
+        return any(found(content) for content in contents)
     rel = m.group(1)
     # `new URL('../src/x.ts', import.meta.url)` 는 테스트 파일 기준, `join(rootDir, 'src/x.ts')` 는
     # studio 기준이다. 둘 다 시도해 존재하는 쪽을 쓴다.
     for base in (test_path.parent, test_path.parent.parent):
         candidate = (base / rel).resolve()
         if candidate.exists():
-            return text in candidate.read_text(encoding='utf-8')
+            return found(candidate.read_text(encoding='utf-8'))
     return True
 
 
@@ -119,6 +135,12 @@ def main():
                 inner = [re.sub(r'\\(.)', r'\1', piece) for piece in inner]
                 text = next((piece for piece in inner if any(piece in value for value in values)), None)
                 if text is None:
+                    continue
+                if source_has_text(path, source_var(target), text, found=still_passes(kind, pattern)):
+                    # 이 경로도 같은 질문을 해야 한다. 빠져 있어서 3단계(명령 소스는 그대로)에서
+                    # `id: '…'[\s\S]*?label: '…'` 단정이 쓸데없이 약한 꼴로 바뀌었다.
+                    # 문구가 '어딘가 있나' 로는 부족하다(같은 문구가 다른 문자열 속에 남는다) —
+                    # 원래 단정이 지금 소스에서도 통과하면 그대로 둔다.
                     continue
             elif source_has_text(path, source_var(target), text):
                 continue     # 테스트가 읽는 소스에 아직 그 문구가 있다 — 건드릴 이유가 없다(B-3)
