@@ -37,6 +37,24 @@ SAFE = [
     ('showToast', re.compile(r'\bshowToast\(\s*$'), 'message'),
 ]
 
+# 탭 라벨 — 로직이 탭 ID 로 구분하게 된 뒤(#7167) 라벨은 ID 바로 옆에 있다. 키도 ID 로 짓는다(dialog.<대화상자>.tab.<id>).
+TAB_DEF_BEFORE = re.compile(r"\{\s*id:\s*'([A-Za-z]\w*)',\s*label:\s*$")
+TAB_RECORD_ENTRY_BEFORE = re.compile(r"\n\s*([A-Za-z]\w*):\s*$")
+TAB_RECORD_HEAD = re.compile(r"const\s+[A-Z_]*TAB_LABELS\b[^=]*=\s*\{")
+
+
+def tab_id_before(src, pos, before):
+    m = TAB_DEF_BEFORE.search(before)
+    if m:
+        return m.group(1)
+    m = TAB_RECORD_ENTRY_BEFORE.search(before)
+    if m:
+        heads = list(TAB_RECORD_HEAD.finditer(src, 0, pos))
+        if heads and '}' not in src[heads[-1].end():pos]:
+            return m.group(1)
+    return None
+
+
 IDENT_BEFORE = re.compile(r'([A-Za-z_$][\w$]*)\s*\.\s*(?:textContent|title|placeholder|value)\s*=\s*$')
 
 
@@ -177,6 +195,60 @@ def enclosing_call(src, pos):
     return None
 
 
+EXISTING_I18N_IMPORT = re.compile(r"import\s*\{[^}]*\bt\b(?:\s+as\s+([A-Za-z_$][\w$]*))?[^}]*\}\s*from\s*'[^']*i18n/index(?:\.ts)?'")
+
+
+COMMAND_FACTORY = re.compile(r'^\s*(?:export\s+)?function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*:\s*CommandDef\s*\{', re.M)
+
+
+def matching_paren(src, open_pos, opener='(', closer=')'):
+    """여는 괄호의 짝. 문자열 안의 괄호는 세지 않는다."""
+    depth, i, quote = 0, open_pos, None
+    while i < len(src):
+        ch = src[i]
+        if quote:
+            if ch == '\\':
+                i += 1
+            elif ch == quote:
+                quote = None
+        elif ch in "'\"`":
+            quote = ch
+        elif ch == opener:
+            depth += 1
+        elif ch == closer:
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return len(src)
+
+
+def top_level_args(text, with_offsets=False):
+    """깊이 0 의 쉼표로 가른 인자 목록(문자열 안 쉼표는 무시)."""
+    out, depth, quote, start = [], 0, None, 0
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == '\\':
+                i += 1
+            elif ch == quote:
+                quote = None
+        elif ch in "'\"`":
+            quote = ch
+        elif ch in '([{':
+            depth += 1
+        elif ch in ')]}':
+            depth -= 1
+        elif ch == ',' and depth == 0:
+            out.append((start, text[start:i]))
+            start = i + 1
+        i += 1
+    if text[start:].strip():
+        out.append((start, text[start:]))
+    return out if with_offsets else [a for _, a in out]
+
+
 def pick_name(src):
     """이 파일에서 쓸 수 있는 이름을 고른다.
 
@@ -256,7 +328,10 @@ def main():
     for path in sorted(root.glob('*.ts')):
         src = path.read_text(encoding='utf-8')
         base = f'dialog.{dialog_name(path)}'
-        name = pick_name(src)
+        # 이미 i18n 을 가져오는 파일(상류에 병합된 대화상자)은 그 이름을 쓴다. 새 이름을 고르면 import 가
+        # 이미 있다고 보고 넣지 않아 없는 이름을 부르게 된다(d5fbe8b5d: `t as i18nText` 파일에 i18nMessage).
+        existing = EXISTING_I18N_IMPORT.search(src)
+        name = (existing.group(1) or 't') if existing else pick_name(src)
         if name != 't':
             shadowed_files.append(f'{path.name}({name})')
         allowed_helpers = helpers.get(path.name, set())
@@ -307,6 +382,50 @@ def main():
                     if COMPARE_BEFORE.search(head):
                         continue
                     covered[other.start] = role
+
+        # 명령 정의 공장(`function stub(id: string, label: string): CommandDef`)의 label 인자는 명령 팔레트·
+        # 메뉴에 나가는 이름이다. 본문에서 label 이 돌려주는 객체의 label 속성으로만 쓰일 때만 옮긴다.
+        # 같은 문장의 다른 한글(되돌리기 기록 이름 등)까지 번지지 않게 그 인자 하나만 표시한다.
+        factory_keys = {}
+        for fm in COMMAND_FACTORY.finditer(src):
+            fname = fm.group(1)
+            open_paren = src.index('(', fm.start())
+            close = matching_paren(src, open_paren)
+            names = [re.match(r'\s*(?:\.\.\.)?([A-Za-z_$][\w$]*)', a).group(1) for a in top_level_args(src[open_paren + 1:close])
+                     if re.match(r'\s*(?:\.\.\.)?[A-Za-z_$]', a)]
+            if 'label' not in names:
+                continue
+            index = names.index('label')
+            brace = src.index('{', close)
+            body = src[brace:matching_paren(src, brace, '{', '}') + 1]
+            rest = re.sub(r'(?<![.\w$])label\s*:\s*label\b|^\s*label\s*(?=,|\n)', '', body, flags=re.M)
+            if re.search(r'(?<![.\w$\'"])label\b(?!\s*:)', rest):
+                continue
+            for call in re.finditer(r'(?<![\w$.])' + re.escape(fname) + r'\(', src):
+                if src[max(0, call.start() - 9):call.start()].endswith('function '):
+                    continue
+                open_call = call.end() - 1
+                args = top_level_args(src[open_call + 1:matching_paren(src, open_call)], with_offsets=True)
+                if len(args) <= index:
+                    continue
+                offset, arg = args[index]
+                lead = len(arg) - len(arg.lstrip())
+                start = open_call + 1 + offset + lead
+                if src[start] not in "'`\"" or not re.search(r'[가-힣]', arg):
+                    continue
+                covered.setdefault(start, 'label')
+                first = args[0][1].strip()
+                cmd = re.fullmatch(r"'([a-z]+):([a-z0-9-]+)'", first)
+                plain = re.fullmatch(r"'([A-Za-z][\w-]*)'", first)
+                if cmd:
+                    # 마크업이 같은 명령에 같은 글로 만든 키가 있으면 그 키를 쓰고, 글이 다르면(메뉴 '위' / 팔레트
+                    # '캡션 - 위') registryLabel 로 가른다 — 같은 키에 덮어쓰면 상류 메뉴 글이 바뀐다(seed 검사가 잡았다).
+                    markup = f'command.{slug(cmd.group(1))}.{slug(cmd.group(2))}.label'
+                    text_here = unescape(arg.strip()[1:-1], arg.strip()[0])
+                    role_name = 'label' if catalog.get(markup) == text_here else 'registryLabel'
+                    factory_keys[start] = f'{base}.{slug(cmd.group(2))}.{role_name}'
+                elif plain:
+                    factory_keys[start] = f'{base}.{slug(fname)}.{slug(plain.group(1))}'
 
         # 입력칸 기본값 중 '나중에 읽히는' 것은 화면 글자가 아니라 문서로 들어가는 값이다
         # (새 스타일 이름·누름틀 안내문·책갈피 이름). 영어 화면에서 문서 내용이 달라지면 안 되므로
@@ -419,6 +538,11 @@ def main():
                     if enclosing:
                         hint = slug(enclosing)
             stem = f'{base}.{hint}.{role}' if hint else f'{base}.{role}'
+            tab_id = tab_id_before(src, lit.start, before) if not params else None
+            if tab_id:
+                stem = f'{base}.tab.{tab_id}'
+            if lit.start in factory_keys:
+                stem = factory_keys[lit.start]
             key = stem
             if catalog.get(key, text) != text or added.get(key, text) != text:
                 key = f'{stem}.{fingerprint(text)}'

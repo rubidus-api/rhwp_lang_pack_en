@@ -270,6 +270,16 @@ def main():
             key = f'{stem}.{mark}'
         else:
             key = stem
+        existing = el.attrs.get(attr_name)
+        if existing:
+            # 상류에 이미 들어간 표시(2단계 병합 뒤): 붙어 있는 키를 그대로 쓰고 속성을 또 붙이지 않는다.
+            # 다시 계산한 키가 다르면 알린다 — 상류 키가 정본이다.
+            if existing != key:
+                print(f'  알림: 기존 키 유지 {existing} (다시 계산하면 {key})')
+            if catalog.get(existing, value) != value:
+                print(f'  경고: 키 충돌 {existing}: {catalog[existing]!r} vs {value!r}')
+            catalog[existing] = value
+            continue
         previous = catalog.get(key)
         if previous is not None and previous != value:
             print(f'  경고: 키 충돌 {key}: {previous!r} vs {value!r}')

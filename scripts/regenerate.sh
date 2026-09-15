@@ -16,8 +16,13 @@ helpers="$root/build/display-helpers.tsv"
 mkdir -p "$root/build" "$catalog"
 
 # 메인테이너가 PR 가지에 올린 보정(overlay/patches/*.patch)을 정본에 흡수한다. 이미 상류에 들어갔으면 건너뛴다.
+# 파일 이름의 커밋(pr7152-e917cffb9-…)이 origin/devel 에 들어 있으면 먼저 건너뛴다 — 병합 뒤 상류가 같은 자리를
+# 또 고치면 역적용 검사가 실패하기 때문이다(#7171 이 그랬다).
 apply_patch() {
-  if git -C "$repo" apply --reverse --check "$1" 2>/dev/null; then
+  source_commit=$(basename "$1" | sed -n 's/^pr[0-9]*-\([0-9a-f]\{7,40\}\)-.*/\1/p')
+  if [ -n "$source_commit" ] && git -C "$repo" merge-base --is-ancestor "$source_commit" origin/devel 2>/dev/null; then
+    echo "   $(basename "$1"): 상류에 병합됨($source_commit)"
+  elif git -C "$repo" apply --reverse --check "$1" 2>/dev/null; then
     echo "   $(basename "$1"): 이미 반영됨"
   elif git -C "$repo" apply "$1"; then
     echo "   $(basename "$1"): 적용"
@@ -46,6 +51,8 @@ head -1 "$root/build/step-1.log"
 echo "== 2. 변환 (마크업 → 대화상자 → 표 → 명령)"
 python3 "$root/scripts/apply-i18n-html.py" "$studio/index.html" --catalog "$catalog" --write > "$root/build/step-2.log"
 head -1 "$root/build/step-2.log"
+# 상류에 이미 병합된 키(t('…') 로 바뀌어 한글이 없는 자리)를 심는다 — 마크업 변환이 카탈로그를 새로 쓰므로 그 뒤에
+python3 "$root/scripts/seed-catalog.py" "$repo" "$catalog/ko.json" "$root/build/seed-keys.json"
 python3 "$root/scripts/apply-i18n-ts.py" "$studio/src/ui" "$catalog/ko.json" --helpers "$helpers" --write > "$root/build/step-3.log"
 head -1 "$root/build/step-3.log"
 python3 "$root/scripts/apply-i18n-tables.py" "$studio/src/ui" "$catalog/ko.json" "$helpers" --write > "$root/build/step-4.log"
@@ -66,6 +73,7 @@ if ! sh "$root/scripts/rebuild-langpack.sh" > "$root/build/rebuild-langpack.log"
   exit 1
 fi
 grep -E "en.json|번역하지" "$root/build/rebuild-langpack.log" || true
+python3 "$root/scripts/seed-catalog.py" --check "$catalog/ko.json" "$root/build/seed-keys.json"
 
 echo "== 5. 테스트 상태(4단계)"
 sh "$root/scripts/stage-tests.sh" 4 "$catalog/ko.json" > "$root/build/stage-tests.log"

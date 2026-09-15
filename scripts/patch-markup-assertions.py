@@ -30,7 +30,11 @@ def main():
         for pattern in PATTERNS:
             def sub(match):
                 head = match.group(1)
-                return match.group(0) if head.endswith('[^>]*') else head + '[^>]*>'
+                # 이미 고친 단정(상류에 병합된 뒤): 게으른 매치가 `[^>]*>` 안의 `>` 에서 멈춰 head 가 `[^` 로 끝난다.
+                # 또 넣으면 `[^[^>]*>]*>` 가 된다(2026-09-16 d5fbe8b5d 재생성에서 잡힘).
+                if head.endswith('[^>]*') or head.endswith('[^'):
+                    return match.group(0)
+                return head + '[^>]*>'
             out = pattern.sub(sub, out)
         if out != src:
             changed += 1
