@@ -25,13 +25,14 @@ DISPLAY = [
 # `[^)]*\)` 가 첫 `)` 에서 멈춰 정의 자체를 못 읽는다(createButton·createRow 가 그랬다).
 # 그래서 머리만 정규식으로 잡고 괄호 깊이로 끝을 센다.
 DEF_HEAD = re.compile(
-    r'^\s*(?:private |protected |public |static |async )*(?:function\s+)?'
+    r'^\s*(?:export\s+)?(?:private |protected |public |static |async )*(?:function\s+)?'
     r'(?P<name>[A-Za-z_$][\w$]*)\(\s*(?P<param>[A-Za-z_$][\w$]*)\s*[?:]'
     r'|'
     # 지역 화살표 도우미: const addFormatButton = (label: string, …) => {
-    r'^\s*(?:const|let)\s+(?P<name2>[A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(\s*(?P<param2>[A-Za-z_$][\w$]*)\s*[?:]',
+    r'^\s*(?:export\s+)?(?:const|let)\s+(?P<name2>[A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(\s*(?P<param2>[A-Za-z_$][\w$]*)\s*[?:]',
     re.M,
 )
+IMPORT = re.compile(r"import\s*\{(?P<names>[^}]*)\}\s*from\s*'(?P<mod>(?:\./|@/ui/)[\w.-]+)'")
 SKIP_NAMES = {'if', 'for', 'while', 'switch', 'catch', 'constructor', 'super', 'return'}
 
 
@@ -199,6 +200,23 @@ def main():
                 # '판정 무관' 이다. 목록에 넣으면 hwp16ToMm 같은 이름이 섞여 목록이 거짓이 된다.
                 continue
             verdicts[name].append((path.name, good, total, display))
+
+    # 다른 파일에서 가져온 도우미(`import { label } from './para-shape-helpers'`)는 정의가 가져온
+    # 파일에 없다. 상류가 도우미를 공유 모듈로 뺐을 때 문단 모양 대화상자 전체가 변환에서 빠졌다.
+    # 정의한 파일의 판정을 가져온 파일로 그대로 옮긴다(별칭이면 별칭 이름으로).
+    defined = {(filename, name): good for name, entries in verdicts.items() for filename, good, _, _ in entries}
+    for path in sorted(root.glob('*.ts')):
+        src = path.read_text(encoding='utf-8')
+        for m in IMPORT.finditer(src):
+            target = m.group('mod').split('/')[-1]
+            target = target if target.endswith('.ts') else target + '.ts'
+            for spec in m.group('names').split(','):
+                parts = spec.strip().replace('type ', '').split(' as ')
+                if not parts[0]:
+                    continue
+                orig, local = parts[0].strip(), parts[-1].strip()
+                if (target, orig) in defined and (path.name, local) not in defined:
+                    verdicts[local].append((path.name, defined[(target, orig)], 0, 0))
 
     # 판정은 파일별로 한다. `this.label(...)` 은 같은 파일의 정의를 부르므로,
     # 다른 파일의 같은 이름 때문에 멀쩡한 자리를 포기할 이유가 없다.
