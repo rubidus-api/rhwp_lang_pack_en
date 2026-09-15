@@ -1,4 +1,4 @@
-feat(i18n): 명령 레지스트리 영어 표시 (4/4)
+feat(i18n): 명령 레지스트리 영어 표시 (#5852 4단계 2/2)
 
 src/command/commands 9개 파일에서 label: 과 토스트·경고 메시지, 명령 정의 공장
 (stub·blockCalcCommand·themeModeCommand·themeSkinCommand)의 이름 인자까지 202곳을 옮겼다.
