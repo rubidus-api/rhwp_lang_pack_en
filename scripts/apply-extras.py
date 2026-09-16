@@ -20,6 +20,29 @@ def slug(text):
     return parts[0][:1].lower() + parts[0][1:] + ''.join(p[:1].upper() + p[1:] for p in parts[1:]) if parts else 'x'
 
 
+def registry_renames(studio, ko):
+    """레지스트리 라벨 키 → 마크업이 만든 키(글이 같을 때)나 registryLabel 키.
+
+    이미 그 이름인 키는 목록에 넣지 않는다 — 넣으면 부르는 쪽에서 값을 옮긴 뒤 지워 카탈로그에서 사라진다
+    (2026-09-16: 4단계가 상류에 들어간 뒤 다시 돌리자 registryLabel 키 71개가 그렇게 없어졌다).
+    """
+    renames = {}
+    for f in sorted((studio / 'src/command/commands').glob('*.ts')):
+        src = f.read_text(encoding='utf-8')
+        for m in re.finditer(r"id:\s*'([a-z]+):([a-z0-9-]+)'[\s\S]*?label:\s*t\('([^']+)'\)", src):
+            grp, cid, old = m.groups()
+            if src[m.start():m.end()].count("id: '") > 1:
+                continue
+            markup = f'command.{slug(grp)}.{slug(cid)}.label'
+            if old == markup:
+                continue
+            new_key = markup if ko.get(markup) == ko.get(old) and markup in ko else f'command.{slug(grp)}.{slug(cid)}.registryLabel'
+            if new_key == old:
+                continue
+            renames[old] = new_key
+    return renames
+
+
 def main():
     studio = pathlib.Path(sys.argv[1])
     catalog_path = pathlib.Path(sys.argv[2])
@@ -116,20 +139,7 @@ def main():
     report.append('머리말/꼬리말 표시 2파일')
 
     # 2. 레지스트리 라벨 재키잉
-    renames = {}
-    for f in sorted((studio / 'src/command/commands').glob('*.ts')):
-        src = f.read_text(encoding='utf-8')
-        for m in re.finditer(r"id:\s*'([a-z]+):([a-z0-9-]+)'[\s\S]*?label:\s*t\('([^']+)'\)", src):
-            grp, cid, old = m.groups()
-            if src[m.start():m.end()].count("id: '") > 1:
-                continue
-            markup = f'command.{slug(grp)}.{slug(cid)}.label'
-            if old == markup:
-                continue
-            if markup in ko and ko[markup] == ko.get(old):
-                renames[old] = markup
-            else:
-                renames[old] = f'command.{slug(grp)}.{slug(cid)}.registryLabel'
+    renames = registry_renames(studio, ko)
     for f in sorted((studio / 'src/command/commands').glob('*.ts')):
         src = f.read_text(encoding='utf-8'); orig = src
         for old, new in renames.items():

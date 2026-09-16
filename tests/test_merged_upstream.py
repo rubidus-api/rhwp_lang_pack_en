@@ -7,6 +7,7 @@
 
   python3 -m unittest tests/test_merged_upstream.py
 """
+import importlib.util
 import json
 import pathlib
 import subprocess
@@ -139,6 +140,36 @@ class MarkupAssertionsAlreadyPatched(unittest.TestCase):
             self.assertIn('class="visually-hidden"[^>]*>제목', got)
             self.assertIn('aria-label="주 메뉴"[^>]*>', got)
             self.assertNotIn('[^[^', got)
+
+
+class RegistryRekeyIdempotent(unittest.TestCase):
+    """이미 registryLabel 키인 명령을 다시 돌려도 이름이 바뀌지 않는다(바뀌면 카탈로그에서 지워졌다)."""
+
+    def renames(self, source, catalog):
+        spec = importlib.util.spec_from_file_location('apply_extras', SCRIPTS / 'apply-extras.py')
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        with tempfile.TemporaryDirectory() as d:
+            studio = pathlib.Path(d)
+            (studio / 'src/command/commands').mkdir(parents=True)
+            (studio / 'src/command/commands/insert.ts').write_text(source, encoding='utf-8')
+            return mod.registry_renames(studio, catalog)
+
+    def test_registry_label_key_stays(self):
+        got = self.renames(
+            "export const commands = [\n"
+            "  { id: 'insert:caption-top', label: t('command.insert.captionTop.registryLabel') },\n"
+            "];\n",
+            {'command.insert.captionTop.registryLabel': '캡션 - 위', 'command.insert.captionTop.label': '위'})
+        self.assertEqual(got, {})
+
+    def test_markup_key_is_reused_when_text_matches(self):
+        got = self.renames(
+            "export const commands = [\n"
+            "  { id: 'file:open', label: t('dialog.file.open.label') },\n"
+            "];\n",
+            {'dialog.file.open.label': '열기', 'command.file.open.label': '열기'})
+        self.assertEqual(got, {'dialog.file.open.label': 'command.file.open.label'})
 
 
 class SeedCheck(unittest.TestCase):
