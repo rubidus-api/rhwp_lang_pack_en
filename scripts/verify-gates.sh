@@ -11,12 +11,12 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 repo="$root/work/rhwp"
 studio="$repo/rhwp-studio"
 base=${BASE_REF:-devel}
-branches=${*:-"i18n/1-skeleton i18n/2-menus i18n/3-dialogs i18n/4-commands"}
+branches=${*:-"i18n/1-skeleton i18n/2-menus i18n/3-dialogs i18n/4-commands i18n/5-dialog-rest"}
 
 [ -d "$studio" ] || { echo "verify-gates: 작업 사본이 없다"; exit 1; }
 mkdir -p "$root/build"
 
-touched=$(git -C "$repo" diff --name-only "$base" i18n/4-commands | grep -cE '\.rs$|Cargo\.(toml|lock)$|tsconfig|vite\.config|package(-lock)?\.json|\.github/' || true)
+touched=$(git -C "$repo" diff --name-only "$base" i18n/5-dialog-rest | grep -cE '\.rs$|Cargo\.(toml|lock)$|tsconfig|vite\.config|package(-lock)?\.json|\.github/' || true)
 if [ "$touched" -ne 0 ]; then
   echo "verify-gates: Rust·빌드설정·CI 파일을 건드렸다 ($touched 개). 발자국 주장이 틀렸다." >&2
   exit 1
@@ -49,7 +49,7 @@ echo
 echo "== 빌드 경고 대조 (기준선과 같아야 한다)"
 git -C "$repo" checkout -q "$base"
 npm --prefix "$studio" run build > "$root/build/build-base.log" 2>&1 || true
-git -C "$repo" checkout -q i18n/4-commands
+git -C "$repo" checkout -q i18n/5-dialog-rest
 # 프로세스 치환(<(...))은 POSIX sh 에 없다. 임시 파일로 간다.
 strip_warnings() {
   sed 's/\x1b\[[0-9;]*m//g' "$1" | grep -E '\(!\)|warn|deprecat' | sort -u > "$2" || true

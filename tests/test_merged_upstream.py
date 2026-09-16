@@ -125,6 +125,57 @@ class CommandFactoryLabels(unittest.TestCase):
             self.assertIn("'되돌리기 이름'", got)
 
 
+class PairArrayLabels(unittest.TestCase):
+    """[값, 표시글] 짝 배열은 표시글만 옮기고, 값을 비교에도 쓰면 통째로 건드리지 않는다."""
+
+    def convert(self, source):
+        with tempfile.TemporaryDirectory() as d:
+            src = pathlib.Path(d) / 'src'
+            ui = src / 'ui'
+            (src / 'i18n').mkdir(parents=True)
+            (src / 'i18n' / 'index.ts').write_text('export const t = (k: string) => k;\n', encoding='utf-8')
+            ui.mkdir()
+            f = ui / 'sample-dialog.ts'
+            f.write_text(source, encoding='utf-8')
+            catalog = pathlib.Path(d) / 'ko.json'
+            catalog.write_text('{}\n', encoding='utf-8')
+            done = run(SCRIPTS / 'apply-i18n-ts.py', ui, catalog, '--write')
+            self.assertEqual(done.returncode, 0, done.stderr)
+            return f.read_text(encoding='utf-8')
+
+    def test_display_slot_only(self):
+        got = self.convert(
+            "export function build(): void {\n"
+            "  for (const [val, lbl] of [['0', '선 없음']] as const) {\n"
+            "    const o = document.createElement('option');\n"
+            "    o.value = val; o.textContent = lbl;\n"
+            "  }\n"
+            "}\n")
+        self.assertIn("['0', t(", got)
+        self.assertNotIn("'선 없음'", got)
+
+    def test_named_tuple_array_through_variable(self):
+        got = self.convert(
+            "export function build(): void {\n"
+            "  const presets: [string, string][] = [['\u25a1', '상자형']];\n"
+            "  for (const [icon, title] of presets) {\n"
+            "    const b = document.createElement('button');\n"
+            "    b.textContent = icon; b.title = title;\n"
+            "  }\n"
+            "}\n")
+        self.assertNotIn("'상자형'", got)
+
+    def test_value_compared_elsewhere_is_left_alone(self):
+        got = self.convert(
+            "export function build(): void {\n"
+            "  for (const [key, name] of [['a', '이름표']] as const) {\n"
+            "    if (name === '이름표') document.body.dataset.x = key;\n"
+            "  }\n"
+            "}\n")
+        self.assertIn("'이름표'", got)
+        self.assertNotIn("t('", got)
+
+
 class MarkupAssertionsAlreadyPatched(unittest.TestCase):
     def test_second_run_changes_nothing(self):
         with tempfile.TemporaryDirectory() as d:

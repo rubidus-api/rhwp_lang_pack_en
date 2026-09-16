@@ -14,6 +14,9 @@ import pathlib
 import re
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import tsscan
+
 DISPLAY = [
     re.compile(r'\.(?:textContent|innerText|title|label|placeholder|alt|value)\s*=\s*[^;]*\b%s\b'),
     re.compile(r'createTextNode\(\s*[^)]*\b%s\b'),
@@ -26,7 +29,8 @@ DISPLAY = [
 # 그래서 머리만 정규식으로 잡고 괄호 깊이로 끝을 센다.
 DEF_HEAD = re.compile(
     r'^\s*(?:export\s+)?(?:private |protected |public |static |async )*(?:function\s+)?'
-    r'(?P<name>[A-Za-z_$][\w$]*)\(\s*(?P<param>[A-Za-z_$][\w$]*)\s*[?:]'
+    # 제네릭이 붙은 정의(`radioGroup<T extends string>(`)도 읽는다 — 못 읽으면 그 도우미의 인자가 통째로 빠진다
+    r'(?P<name>[A-Za-z_$][\w$]*)(?:<[^<>()]*>)?\(\s*(?P<param>[A-Za-z_$][\w$]*)\s*[?:]'
     r'|'
     # 지역 화살표 도우미: const addFormatButton = (label: string, …) => {
     r'^\s*(?:export\s+)?(?:const|let)\s+(?P<name2>[A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(\s*(?P<param2>[A-Za-z_$][\w$]*)\s*[?:]',
@@ -96,7 +100,11 @@ def definitions(src):
         name = match.group('name') or match.group('name2')
         if name in SKIP_NAMES:
             continue
-        open_paren = src.index('(', match.start() if match.group('name') else src.index('=', match.start()))
+        start = match.start() if match.group('name') else src.index('=', match.start())
+        open_paren = src.index('(', start)
+        angle = src.find('<', start)
+        if 0 <= angle < open_paren:      # 제네릭 괄호는 건너뛴다
+            open_paren = src.index('(', src.index('>', angle))
         close = param_list_end(src, open_paren)
         if close < 0:
             continue
@@ -108,9 +116,33 @@ def definitions(src):
         yield name, param_names(src, open_paren, close), close + tail.end() - 1
 
 
+def code_only(body):
+    """문자열과 주석을 공백으로 바꾼 사본. 이름이 문자열 안에 들어 있어도 '사용' 으로 세지 않는다.
+
+    `label.style.cssText = 'color:var(--color-text);'` 의 text 를 매개변수 사용으로 세는 바람에
+    미주 모양 대화상자의 label 도우미가 '표시 밖에서도 쓴다' 로 탈락했다(2026-09-16).
+    """
+    out = list(body)
+    for lit in tsscan.literals(body):
+        for i in range(lit.start, min(lit.end, len(out))):
+            out[i] = ' '
+        if lit.quote == '`':
+            # 템플릿의 `${…}` 안은 글자가 아니라 코드다. `createTextNode(` ${text}`)` 의 text 는 실제 사용이다.
+            for m in re.finditer(r'\$\{[^{}]*\}', body[lit.start:lit.end]):
+                for i in range(lit.start + m.start(), lit.start + m.end()):
+                    out[i] = body[i]
+    text = ''.join(out)
+    text = re.sub(r'//[^\n]*', lambda m: ' ' * len(m.group(0)), text)
+    return re.sub(r'/\*[\s\S]*?\*/', lambda m: ' ' * len(m.group(0)), text)
+
+
+# 값을 드러내지 않는 존재 확인: `if (unitText)`·`!unitText`·`unitText ? …` 는 화면 밖 사용이 아니다.
+GUARD = re.compile(r'(?:if\s*\(\s*!?\s*%s\s*\)|!\s*%s\b|\b%s\s*(?:\?|&&|\|\|))')
+
+
 def var_uses(body, name):
     """변수로 쓰인 횟수. `opt.value` 의 속성 이름은 변수가 아니다."""
-    return len(re.findall(r'(?<![.\w$])' + re.escape(name) + r'\b', body))
+    return len(re.findall(r'(?<![.\w$])' + re.escape(name) + r'\b', code_only(body)))
 
 
 def body_of(src, start):
@@ -134,6 +166,9 @@ PAIR_LOOP = [
 # 기계 값이 가도 되는 자리 — 화면에 글자로 나오지 않는다.
 MACHINE = re.compile(r'\.(?:value|id|htmlFor|className|name)\s*=\s*[^;]*\b%s\b|dataset\.[\w$]+\s*=\s*[^;]*\b%s\b')
 
+# 짝 배열의 '값' 자리에서만 인정하는 비교식. 일반 매개변수의 비교는 그 값이 로직이라는 뜻이라 인정하지 않는다.
+COMPARE = re.compile(r'\b%s\s*(?:===|!==|==|!=)|(?:===|!==|==|!=)\s*%s\b')
+
 
 def pair_consumer(body, param):
     """인자를 [값, 표시글] 짝으로 풀어 쓰는 도우미인가.
@@ -152,7 +187,8 @@ def pair_consumer(body, param):
                 for m in re.finditer(pattern2.pattern % re.escape(second), body)
             })
             first_uses = var_uses(body, first) - 1
-            first_machine = len(re.findall(MACHINE.pattern % (re.escape(first), re.escape(first)), body))
+            first_machine = (len(re.findall(MACHINE.pattern % (re.escape(first), re.escape(first)), body))
+                             + len(re.findall(COMPARE.pattern % (re.escape(first), re.escape(first)), body)))
             if second_display >= second_uses and first_machine >= first_uses:
                 return True
     return False
@@ -173,8 +209,9 @@ def main():
             string_params = [n for n, is_str in params if is_str]
             if not string_params:
                 continue        # 문자열 인자가 없는 도우미 — 변환기가 건드릴 것이 없다
+            code = code_only(body)
             for param in string_params:
-                uses = [m.start() for m in re.finditer(r'(?<![.\w$])' + re.escape(param) + r'\b', body)]
+                uses = [m.start() for m in re.finditer(r'(?<![.\w$])' + re.escape(param) + r'\b', code)]
                 if not uses:
                     continue
                 shown = len({
@@ -183,6 +220,7 @@ def main():
                     for m in re.finditer(pattern.pattern % re.escape(param), body)
                 })
                 machine = len(re.findall(MACHINE.pattern % (re.escape(param), re.escape(param)), body))
+                guard = len(re.findall(GUARD.pattern % tuple([re.escape(param)] * 3), code))
                 total += len(uses)
                 display += shown
                 if pair_consumer(body, param):
@@ -191,7 +229,7 @@ def main():
                     # — 안 그러면 display==0 으로 걸려 '판정 무관' 이 되어 빠진다.
                     display += 1
                     continue
-                if shown + machine < len(uses):
+                if shown + machine + guard < len(uses):
                     good = False
             if total == 0:
                 continue        # 인자를 아예 안 쓰는 도우미 — 판정 대상 아님

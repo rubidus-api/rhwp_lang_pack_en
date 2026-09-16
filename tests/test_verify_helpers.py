@@ -64,5 +64,76 @@ class VerifyHelpers(unittest.TestCase):
         self.assertNotIn(('dialog.ts', 'label'), got)
 
 
+    def test_name_inside_a_string_is_not_a_use(self):
+        # `--color-text` 의 text 를 매개변수 사용으로 세면 표시 전용 도우미가 탈락한다(2026-09-16).
+        got = self.verdicts({'dialog-a.ts': (
+            "function label(text: string): HTMLSpanElement {\n"
+            "  const span = document.createElement('span');\n"
+            "  span.textContent = text;\n"
+            "  span.style.cssText = 'color:var(--color-text);';\n"
+            "  return span;\n"
+            "}\n"
+            "const a = label('왼쪽');\n")})
+        self.assertIn(('dialog-a.ts', 'label'), got)
+
+    def test_existence_guard_is_not_a_non_display_use(self):
+        got = self.verdicts({'dialog-b.ts': (
+            "function row(labelText: string, unitText?: string): HTMLDivElement {\n"
+            "  const d = document.createElement('div');\n"
+            "  d.textContent = labelText;\n"
+            "  if (unitText) {\n"
+            "    const u = document.createElement('span');\n"
+            "    u.textContent = unitText;\n"
+            "    d.appendChild(u);\n"
+            "  }\n"
+            "  return d;\n"
+            "}\n"
+            "const b = row('간격', 'mm');\n")})
+        self.assertIn(('dialog-b.ts', 'row'), got)
+
+    def test_use_inside_template_interpolation_still_counts(self):
+        got = self.verdicts({'dialog-c.ts': (
+            "function checkbox(text: string): HTMLLabelElement {\n"
+            "  const lb = document.createElement('label');\n"
+            "  lb.appendChild(document.createTextNode(` ${text}`));\n"
+            "  return lb;\n"
+            "}\n"
+            "const c = checkbox('가나');\n")})
+        self.assertIn(('dialog-c.ts', 'checkbox'), got)
+
+
+    def test_generic_helper_definition_is_read(self):
+        # `radioGroup<T extends string>(` 처럼 제네릭이 붙으면 정의를 못 읽어 인자가 통째로 빠졌다.
+        got = self.verdicts({'dialog-d.ts': (
+            "function radioGroup<T extends string>(\n"
+            "  title: string,\n"
+            "  options: [T, string][],\n"
+            "  current: T,\n"
+            "): HTMLElement {\n"
+            "  const fs = document.createElement('fieldset');\n"
+            "  fs.textContent = title;\n"
+            "  for (const [value, labelText] of options) {\n"
+            "    const input = document.createElement('input');\n"
+            "    input.value = value;\n"
+            "    input.checked = value === current;\n"
+            "    fs.appendChild(document.createTextNode(labelText));\n"
+            "  }\n"
+            "  return fs;\n"
+            "}\n"
+            "const d = radioGroup('격자 모양', [['dots', '점']], 'dots');\n")})
+        self.assertIn(('dialog-d.ts', 'radioGroup'), got)
+
+    def test_compared_argument_is_still_rejected(self):
+        # 비교는 짝 배열의 값 자리에서만 봐준다. 일반 인자를 비교하면 그 값이 로직이다.
+        got = self.verdicts({'dialog-e.ts': (
+            "function mark(kind: string): HTMLElement {\n"
+            "  const s = document.createElement('span');\n"
+            "  s.textContent = kind;\n"
+            "  if (kind === '경고') s.className = 'warn';\n"
+            "  return s;\n"
+            "}\n"
+            "const e = mark('경고');\n")})
+        self.assertNotIn(('dialog-e.ts', 'mark'), got)
+
 if __name__ == '__main__':
     unittest.main()

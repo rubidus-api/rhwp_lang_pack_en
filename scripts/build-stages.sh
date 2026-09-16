@@ -12,7 +12,8 @@ CAT=$R/translations/catalog
 TMP=$R/build/stage-build
 mkdir -p $TMP
 cp $R/docs/manual/stage-msgs/msg1.txt $R/docs/manual/stage-msgs/msg2.txt \
-   $R/docs/manual/stage-msgs/msg3.txt $R/docs/manual/stage-msgs/msg4.txt $TMP/
+   $R/docs/manual/stage-msgs/msg3.txt $R/docs/manual/stage-msgs/msg4.txt \
+   $R/docs/manual/stage-msgs/msg5.txt $TMP/
 G="git -C $W"   # 신원은 전역 설정(rubidus-api) — 저장소별 -c 지정 금지
 
 # 0. 전체 상태 스냅샷 — 작업 트리(= regenerate 결과)를 tmp/full 에 커밋한다.
@@ -61,6 +62,16 @@ print(f"단계 {sys.argv[1]}: 카탈로그 {len(fko)}키 (en {len(fen)})")
 PY
 }
 
+# 상류에 이미 언어팩이 들어간 뒤(1~4단계 병합)에는 옛 단계를 다시 쌓지 않는다.
+# 다시 쌓으면 3단계가 src/ui 를 통째로 가져가 새 변경까지 옛 단계 메시지로 묶인다(2026-09-16).
+if git -C $W cat-file -e origin/devel:rhwp-studio/src/i18n/locales/ko.ts 2>/dev/null; then
+  MERGED_STAGES=yes
+  echo "1~4단계: 이미 devel 에 반영됨 — 새 단계만 쌓는다"
+else
+  MERGED_STAGES=no
+fi
+
+if [ "$MERGED_STAGES" = no ]; then
 # ---- 1단계: 골격 ----
 git -C $W checkout -q -B i18n/1-skeleton origin/devel
 git -C $W checkout -q tmp/full -- \
@@ -129,8 +140,24 @@ $G add -A
 if git -C $W diff --cached --quiet; then echo "4단계: 변경 없음(이미 devel 에 반영)"; else $G commit -q -F $TMP/msg4.txt; fi
 echo "4단계 커밋: $(git -C $W rev-parse --short HEAD)"
 
-# ---- 검증: 4단계 트리 == 전체 스냅샷 ----
-if [ -n "$(git -C $W diff $FULL i18n/4-commands --stat)" ]; then
-  echo "★4단계 트리가 전체 상태와 다르다:"; git -C $W diff $FULL i18n/4-commands --stat | tail -20; exit 1
+fi   # MERGED_STAGES = no
+
+# ---- 5단계: 대화상자에 남은 표시 문자열 ----
+if [ "$MERGED_STAGES" = yes ]; then
+  git -C $W checkout -q -B i18n/5-dialog-rest "$BASE"      # 옛 단계가 이미 devel 에 있으니 devel 에서 바로
+else
+  git -C $W checkout -q -B i18n/5-dialog-rest
 fi
-echo "불변식: 4단계 트리 == regenerate 전체 상태 (바이트 동일)"
+git -C $W checkout -q tmp/full -- rhwp-studio rhwp-chrome/build.mjs rhwp-firefox/build.mjs scripts/frontend-extension-dist.test.mjs
+python3 $R/scripts/write-catalog-ts.py $CAT/ko.json $ST/src/i18n/locales/ko.ts ko >/dev/null
+python3 $R/scripts/write-catalog-ts.py $CAT/en.json $ST/src/i18n/locales/en.ts en >/dev/null
+sh $R/scripts/stage-tests.sh 5 $CAT/ko.json | tail -1
+$G add -A
+if git -C $W diff --cached --quiet; then echo "5단계: 변경 없음(이미 devel 에 반영)"; else $G commit -q -F $TMP/msg5.txt; fi
+echo "5단계 커밋: $(git -C $W rev-parse --short HEAD)"
+
+# ---- 검증: 마지막 단계 트리 == 전체 스냅샷 ----
+if [ -n "$(git -C $W diff $FULL HEAD --stat)" ]; then
+  echo "★마지막 단계 트리가 전체 상태와 다르다:"; git -C $W diff $FULL HEAD --stat | tail -20; exit 1
+fi
+echo "불변식: 마지막 단계 트리 == regenerate 전체 상태 (바이트 동일)"

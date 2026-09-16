@@ -35,6 +35,8 @@ SAFE = [
     ('alertConfirm', re.compile(r'\b(alert|confirm)\(\s*$'), 'message'),
     ('superTitle', re.compile(r'\bsuper\(\s*$'), 'title'),
     ('showToast', re.compile(r'\bshowToast\(\s*$'), 'message'),
+    # 체크상자·라디오 라벨은 대부분 이 자리다(도우미 판정에는 있었는데 변환기에는 빠져 있었다).
+    ('createTextNode', re.compile(r'createTextNode\(\s*$'), 'text'),
 ]
 
 # 탭 라벨 — 로직이 탭 ID 로 구분하게 된 뒤(#7167) 라벨은 ID 바로 옆에 있다. 키도 ID 로 짓는다(dialog.<대화상자>.tab.<id>).
@@ -186,7 +188,7 @@ def enclosing_call(src, pos):
             if depth == 0:
                 if ch != '(':
                     return None
-                m = re.search(r'([A-Za-z_$][\w$]*)\s*$', src[max(0, i - 60):i])
+                m = re.search(r'([A-Za-z_$][\w$]*)\s*(?:<[^<>()]*>)?\s*$', src[max(0, i - 60):i])
                 return m.group(1) if m else None
             depth -= 1
         elif ch == ';' and depth == 0:
@@ -247,6 +249,76 @@ def top_level_args(text, with_offsets=False):
     if text[start:].strip():
         out.append((start, text[start:]))
     return out if with_offsets else [a for _, a in out]
+
+
+# [값, 표시글] 짝 배열을 for…of 로 풀어 option·단추를 만드는 자리. 선 종류·적용 범위·번호 모양 목록이 모두 이 꼴이다.
+PAIR_LOOP = re.compile(r'for\s*\(\s*const\s*\[(?P<names>[^\]\n]+)\]\s+of\s+(?P<src>[A-Za-z_$][\w$.]*|\[)')
+# 풀린 변수가 가도 되는 표시 자리
+PAIR_DISPLAY = [
+    r'\.(?:textContent|innerText|title|placeholder|alt)\s*=\s*[^;\n]*\b%s\b',
+    r'createTextNode\(\s*[^)]*\b%s\b',
+    r'setAttribute\(\s*[\'"](?:title|aria-label|placeholder|alt)[\'"]\s*,[^)]*\b%s\b',
+    r'\b(?:label|title|text)\s*:\s*%s\b',
+]
+PAIR_MACHINE = (r'\.(?:value|id|htmlFor|className|name)\s*=\s*[^;\n]*\b%s\b|dataset\.[\w$]+\s*=\s*[^;\n]*\b%s\b'
+                r'|\b%s\s*(?:===|!==|==|!=)|(?:===|!==|==|!=)\s*%s\b')
+
+
+def pair_loop_labels(src):
+    """짝 배열에서 '표시글' 자리에 있는 문자열 리터럴의 시작 위치 집합.
+
+    풀린 이름이 표시 자리로만 가고 나머지 이름은 기계 자리로만 갈 때에만 인정한다.
+    (하나라도 비교·저장에 쓰이면 그 배열은 건드리지 않는다.)
+    """
+    out = set()
+    for m in PAIR_LOOP.finditer(src):
+        names = [n.strip() for n in m.group('names').split(',') if n.strip()]
+        if len(names) < 2:
+            continue
+        brace = src.find('{', m.end())
+        if brace < 0:
+            continue
+        body = src[brace:matching_paren(src, brace, '{', '}') + 1]
+        roles = []
+        for name in names:
+            uses = len(re.findall(r'(?<![.\w$])' + re.escape(name) + r'\b', body))
+            shown = sum(len(re.findall(pat % re.escape(name), body)) for pat in PAIR_DISPLAY)
+            machine = len(re.findall(PAIR_MACHINE % tuple([re.escape(name)] * 4), body))
+            if uses == 0:
+                roles.append('unused')
+            elif shown and shown + machine >= uses and machine == 0:
+                roles.append('display')
+            elif machine and shown == 0:
+                roles.append('machine')
+            else:
+                roles.append('mixed')
+        if 'mixed' in roles or 'display' not in roles:
+            continue
+        # 배열 리터럴 자리 찾기
+        if m.group('src') == '[':
+            open_bracket = src.index('[', m.end() - 1)
+        else:
+            var = m.group('src').split('.')[0]
+            decl = re.search(r'(?:const|let|var)\s+' + re.escape(var) + r'\b[^=\n]*=\s*\[', src[:m.start()])
+            if not decl:
+                continue
+            open_bracket = src.rindex('[', decl.start(), decl.end())
+        close = matching_paren(src, open_bracket, '[', ']')
+        for offset, element in top_level_args(src[open_bracket + 1:close], with_offsets=True):
+            el = element.strip()
+            if not el.startswith('['):
+                continue
+            el_open = open_bracket + 1 + offset + element.index('[')
+            el_close = matching_paren(src, el_open, '[', ']')
+            items = top_level_args(src[el_open + 1:el_close], with_offsets=True)
+            for i, (inner_offset, item) in enumerate(items):
+                if i >= len(roles) or roles[i] != 'display':
+                    continue
+                stripped = item.strip()
+                if not stripped or stripped[0] not in "'\"`" or not re.search(r'[가-힣]', stripped):
+                    continue
+                out.add(el_open + 1 + inner_offset + (len(item) - len(item.lstrip())))
+    return out
 
 
 def pick_name(src):
@@ -348,7 +420,7 @@ def main():
                     role = kind
                     break
             if role is None and allowed_helpers:
-                call = re.search(r'(?:this\.)?([A-Za-z_$][\w$]*)\(\s*$', before)
+                call = re.search(r'(?:this\.)?([A-Za-z_$][\w$]*)(?:<[^<>()]*>)?\(\s*$', before)
                 if call and call.group(1) in allowed_helpers:
                     role = 'label'
             if role is None and allowed_helpers:
@@ -382,6 +454,10 @@ def main():
                     if COMPARE_BEFORE.search(head):
                         continue
                     covered[other.start] = role
+
+        # 짝 배열(`for (const [val, lbl] of [['0','선 없음'], …])`)의 표시글 자리
+        for start in pair_loop_labels(src):
+            covered.setdefault(start, 'label')
 
         # 명령 정의 공장(`function stub(id: string, label: string): CommandDef`)의 label 인자는 명령 팔레트·
         # 메뉴에 나가는 이름이다. 본문에서 label 이 돌려주는 객체의 label 속성으로만 쓰일 때만 옮긴다.
@@ -522,7 +598,7 @@ def main():
             if m:
                 hint = slug(m.group(1))
             else:
-                call = re.search(r'(?:this\.)?([A-Za-z_$][\w$]*)\(\s*(?:[^()]*,\s*)?$', before)
+                call = re.search(r'(?:this\.)?([A-Za-z_$][\w$]*)(?:<[^<>()]*>)?\(\s*(?:[^()]*,\s*)?$', before)
                 if call and call.group(1) in allowed_helpers:
                     hint = slug(call.group(1))
             if not hint:
