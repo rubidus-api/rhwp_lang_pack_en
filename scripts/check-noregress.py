@@ -30,16 +30,23 @@ def main():
 
     ok = True
 
-    stripped = ATTR.sub('', current)
+    # 마크업 표시가 상류에 머지된 뒤에는 '표시를 뗀 것' 이 아니라 '상류와 바이트 같은 것' 이
+    # 무회귀다. 기준선에 이미 data-i18n 이 있으면 그대로 비교한다(2026-09-20).
+    merged_upstream = 'data-i18n' in original
+    stripped = current if merged_upstream else ATTR.sub('', current)
     for line in INTENDED_LINES:
-        stripped = stripped.replace(line, '', 1)
+        if not merged_upstream:
+            stripped = stripped.replace(line, '', 1)
         # 1단계가 상류에 머지된 뒤에는 원본에도 이 줄이 있다. 양쪽에서 똑같이 뺀다.
-        original = original.replace(line, '', 1)
+        original = original.replace(line, '', 1) if not merged_upstream else original
     if stripped == original:
-        print(f'표시 제거 후 원본과 동일: ok (의도한 추가 줄 {len(INTENDED_LINES)}개 제외)')
+        if merged_upstream:
+            print('마크업이 상류와 바이트 같다: ok')
+        else:
+            print(f'표시 제거 후 원본과 동일: ok (의도한 추가 줄 {len(INTENDED_LINES)}개 제외)')
     else:
         ok = False
-        print('표시 제거 후 원본과 다르다', file=sys.stderr)
+        print('마크업이 상류와 다르다' if merged_upstream else '표시 제거 후 원본과 다르다', file=sys.stderr)
         a, b = original.splitlines(), stripped.splitlines()
         for i, (x, y) in enumerate(zip(a, b), 1):
             if x != y:
