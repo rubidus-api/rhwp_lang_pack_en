@@ -75,8 +75,8 @@ fi
 grep -E "en.json|번역하지" "$root/build/rebuild-langpack.log" || true
 python3 "$root/scripts/seed-catalog.py" --check "$catalog/ko.json" "$root/build/seed-keys.json"
 
-echo "== 5. 테스트 상태(4단계)"
-sh "$root/scripts/stage-tests.sh" 4 "$catalog/ko.json" > "$root/build/stage-tests.log"
+echo "== 5. 테스트 상태(마지막 단계)"
+sh "$root/scripts/stage-tests.sh" 6 "$catalog/ko.json" > "$root/build/stage-tests.log"
 tail -1 "$root/build/stage-tests.log"
 
 if [ -f "$catalog/en.todo.json" ]; then

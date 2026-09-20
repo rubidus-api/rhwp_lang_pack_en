@@ -157,6 +157,85 @@ def main():
     reused = sum(1 for v in renames.values() if v.endswith('.label'))
     report.append(f'레지스트리 재키잉 {len(renames)}(마크업 키 재사용 {reused})')
 
+    # 2b. 변환기가 닿지 않는 표시 문구 — 자리마다 손으로 짝을 적는다.
+    #     타입이자 표시인 문자열(도구 상자 이름·확대/축소 방향)은 #7167 처럼 ID 를 먼저 분리한다.
+    hand_pairs = {
+        'src/view/toolbox-visibility.ts': (
+            ("/** 도구 상자 표시 상태 (기본/서식) */",
+             "import { t } from '../i18n/index.ts';\n\n/** 도구 상자 표시 상태 (기본/서식) */"),
+            ("    name: '기본 도구 상자',", "    nameKey: 'ui.toolbox.basic',"),
+            ("    name: '서식 도구 상자',", "    nameKey: 'ui.toolbox.format',"),
+            ("  cmd: string;\n  name: string;", "  cmd: string;\n  nameKey: string;"),
+            # 어순이 언어마다 달라 한 문장으로 둔다('{p1} 접기' / 'Collapse {p1}').
+            ("        const action = visible ? '접기' : '펴기';\n        const label = `${target.name} ${action}`;",
+             "        const label = visible\n"
+             "          ? t('ui.toolbox.collapseLabel', { p1: t(target.nameKey) })\n"
+             "          : t('ui.toolbox.expandLabel', { p1: t(target.nameKey) });"),
+        ),
+        'src/view/zoom-status-controls.ts': (
+            ("/** 상태바 native tooltip용 플랫폼 단축키 문구. */",
+             "import { t } from '../i18n/index.ts';\n\n/** 상태바 native tooltip용 플랫폼 단축키 문구. */"),
+            ("  action: '확대' | '축소',", "  action: 'zoomIn' | 'zoomOut',"),
+            ("    return `${action} (${formatted})`;\n  }\n  const formatted = shortcut === 'Ctrl++' ? 'Ctrl + +' : 'Ctrl + -';\n  return `${action} (${formatted})`;",
+             "    return `${t(`ui.zoom.${action}`)} (${formatted})`;\n  }\n  const formatted = shortcut === 'Ctrl++' ? 'Ctrl + +' : 'Ctrl + -';\n  return `${t(`ui.zoom.${action}`)} (${formatted})`;"),
+        ),
+        'main.ts': (
+            ("zoomPercentShortcutTitle('확대', 'Ctrl++', platform)", "zoomPercentShortcutTitle('zoomIn', 'Ctrl++', platform)"),
+            ("zoomPercentShortcutTitle('축소', 'Ctrl+-', platform)", "zoomPercentShortcutTitle('zoomOut', 'Ctrl+-', platform)"),
+        ),
+        'src/ui/numbering-dialog.ts': (
+            ("    lines.push(`${indent}수준 ${level + 1}: ${marker}`);",
+             "    lines.push(`${indent}${i18nText('dialog.numbering.previewLine', { p1: level + 1, p2: marker })}`);"),
+        ),
+        'src/ui/options-dialog.ts': (
+            ("      return '저장된 감지 결과가 없습니다. Firefox에서는 문서를 열 때 필요한 글꼴만 확인합니다.';",
+             "      return i18nText('dialog.options.localStatus.noStoredFirefox');"),
+            ("      return '이 브라우저는 로컬 글꼴 감지를 지원하지 않습니다.';",
+             "      return i18nText('dialog.options.localStatus.unsupported');"),
+            ("    return '저장된 감지 결과가 없습니다.';",
+             "    return i18nText('dialog.options.localStatus.noStored');"),
+        ),
+        'src/ui/style-toolbar-overflow.ts': (
+            ("      ? `문단 정렬 더보기, 현재 ${currentAlignment}`\n      : '문단 정렬 더보기';",
+             "      ? t('ui.styleToolbarOverflow.alignMoreCurrent', { p1: currentAlignment })\n"
+             "      : t('ui.styleToolbarOverflow.alignMore');"),
+        ),
+        'src/ui/equation-editor-dialog.ts': (
+            ("    this.latexHint.innerHTML = '<span>\U0001f4a1 백슬래시(\\\\) 명령어가 감지됨 — </span>';",
+             "    this.latexHint.replaceChildren(Object.assign(document.createElement('span'), { textContent: i18nText('dialog.equationEditor.latexHint.text') }));"),
+        ),
+    }
+    hand_catalog = {
+        'ui.toolbox.basic': '기본 도구 상자',
+        'ui.toolbox.format': '서식 도구 상자',
+        'ui.toolbox.collapseLabel': '{p1} 접기',
+        'ui.toolbox.expandLabel': '{p1} 펴기',
+        'ui.zoom.zoomIn': '확대',
+        'ui.zoom.zoomOut': '축소',
+        'dialog.numbering.previewLine': '수준 {p1}: {p2}',
+        'dialog.options.localStatus.noStoredFirefox': '저장된 감지 결과가 없습니다. Firefox에서는 문서를 열 때 필요한 글꼴만 확인합니다.',
+        'dialog.options.localStatus.unsupported': '이 브라우저는 로컬 글꼴 감지를 지원하지 않습니다.',
+        'dialog.options.localStatus.noStored': '저장된 감지 결과가 없습니다.',
+        'ui.styleToolbarOverflow.alignMoreCurrent': '문단 정렬 더보기, 현재 {p1}',
+        'ui.styleToolbarOverflow.alignMore': '문단 정렬 더보기',
+        'dialog.equationEditor.latexHint.text': '\U0001f4a1 백슬래시(\\) 명령어가 감지됨 — ',
+    }
+    hand_done = 0
+    for rel, file_pairs in hand_pairs.items():
+        # '../tests/x.ts' = rhwp-studio/tests/x.ts, 'main.ts' = rhwp-studio/src/main.ts
+        fp = studio / (rel[3:] if rel.startswith('../') else rel if rel.startswith('src/') else 'src/' + rel)
+        text = fp.read_text(encoding='utf-8')
+        for old, new in file_pairs:
+            if new in text:
+                continue    # 상류에 이미 반영됨
+            if text.count(old) != 1:
+                raise SystemExit(f'apply-extras: {rel} 에서 기대한 코드가 {text.count(old)}번 나온다(1번이어야 함):\n  {old[:80]}')
+            text = text.replace(old, new)
+            hand_done += 1
+        fp.write_text(text, encoding='utf-8')
+    ko.update(hand_catalog)
+    report.append(f'손 조정 {hand_done}곳')
+
     # 3. CSS — 영어 라벨이 넓어 잘리는 자리. 보정은 html[lang='en'] 에만 건다(한국어 화면은 1px 도 안 바뀐다).
     # 서식 도구 모음은 격자라 칸 폭이 선택 상자 폭을 정한다. 요소 폭(.sb-font-lang)만 넓히면
     # 격자 칸(64px)에 막혀 'Font S' 로 잘린다(2026-09-14 화면으로 확인). 칸을 넓힌다.

@@ -1,9 +1,13 @@
 {
   "dialog.equationEditor.label.xef18fc": "Arrows",
   "dialog.equationProps.fieldset.label.x1d74f5": "Equation Style",
+  "dialog.equationProps.row.label.x1b155a": "Horizontal",
+  "dialog.equationProps.row.label.xe59031": "Vertical",
   "dialog.formula.label": "(Select)",
   "dialog.gridSettings.numberRow.label": "Horizontal",
   "dialog.gridSettings.numberRow.label.xe59031": "Vertical",
+  "dialog.sectionSettings.createObjNumCombo.label": "Continue",
+  "dialog.sectionSettings.createPageNumCombo.label": "Continue",
   "dialog.symbols.label.x75c51f": "Geometric Shapes",
   "dialog.symbols.label.xef18fc": "Arrows",
   "ui.hfApplyTo.both": "Both pages"

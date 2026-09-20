@@ -170,6 +170,17 @@ MACHINE = re.compile(r'\.(?:value|id|htmlFor|className|name)\s*=\s*[^;]*\b%s\b|d
 COMPARE = re.compile(r'\b%s\s*(?:===|!==|==|!=)|(?:===|!==|==|!=)\s*%s\b')
 
 
+def unpacks_to_display(body, param):
+    """`labels.forEach(l => th.textContent = l)` 처럼 배열 인자를 풀어 표시 자리로만 보내는가."""
+    for m in re.finditer(re.escape(param) + r'\.forEach\(\s*\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>|for\s*\(\s*const\s+([A-Za-z_$][\w$]*)\s+of\s+' + re.escape(param) + r'\b', body):
+        item = m.group(1) or m.group(2)
+        uses = var_uses(body, item) - 1
+        shown = len({x.start() for pattern in DISPLAY for x in re.finditer(pattern.pattern % re.escape(item), body)})
+        if shown and shown >= uses:
+            return True
+    return False
+
+
 def pair_consumer(body, param):
     """인자를 [값, 표시글] 짝으로 풀어 쓰는 도우미인가.
 
@@ -223,6 +234,9 @@ def main():
                 guard = len(re.findall(GUARD.pattern % tuple([re.escape(param)] * 3), code))
                 total += len(uses)
                 display += shown
+                if unpacks_to_display(body, param):
+                    display += 1
+                    continue
                 if pair_consumer(body, param):
                     # [값, 표시글] 짝을 풀어 쓰는 소비자(selectOptions 등): 표시글이 표시 자리로만
                     # 가고 값은 기계 자리로만 간다는 것을 pair_consumer 가 확인했다. 표시 수에 더한다

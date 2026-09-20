@@ -13,7 +13,7 @@ TMP=$R/build/stage-build
 mkdir -p $TMP
 cp $R/docs/manual/stage-msgs/msg1.txt $R/docs/manual/stage-msgs/msg2.txt \
    $R/docs/manual/stage-msgs/msg3.txt $R/docs/manual/stage-msgs/msg4.txt \
-   $R/docs/manual/stage-msgs/msg5.txt $TMP/
+   $R/docs/manual/stage-msgs/msg5.txt $R/docs/manual/stage-msgs/msg6.txt $TMP/
 G="git -C $W"   # 신원은 전역 설정(rubidus-api) — 저장소별 -c 지정 금지
 
 # 0. 전체 상태 스냅샷 — 작업 트리(= regenerate 결과)를 tmp/full 에 커밋한다.
@@ -143,6 +143,13 @@ echo "4단계 커밋: $(git -C $W rev-parse --short HEAD)"
 fi   # MERGED_STAGES = no
 
 # ---- 5단계: 대화상자에 남은 표시 문자열 ----
+if [ "$MERGED_STAGES" = yes ] && git -C $W cat-file -e origin/devel:rhwp-studio/src/ui/section-settings-dialog.ts 2>/dev/null \
+   && git -C $W grep -q "sectionSettings.createPageNumCombo" origin/devel -- rhwp-studio/src/ui/section-settings-dialog.ts 2>/dev/null; then
+  SKIP_STAGE5=yes          # 5단계도 이미 devel 에 있다
+else
+  SKIP_STAGE5=no
+fi
+if [ "$SKIP_STAGE5" = no ]; then
 if [ "$MERGED_STAGES" = yes ]; then
   git -C $W checkout -q -B i18n/5-dialog-rest "$BASE"      # 옛 단계가 이미 devel 에 있으니 devel 에서 바로
 else
@@ -155,6 +162,21 @@ sh $R/scripts/stage-tests.sh 5 $CAT/ko.json | tail -1
 $G add -A
 if git -C $W diff --cached --quiet; then echo "5단계: 변경 없음(이미 devel 에 반영)"; else $G commit -q -F $TMP/msg5.txt; fi
 echo "5단계 커밋: $(git -C $W rev-parse --short HEAD)"
+fi   # SKIP_STAGE5
+
+# ---- 6단계: 남은 표시 문자열 ----
+if [ "$MERGED_STAGES" = yes ]; then
+  git -C $W checkout -q -B i18n/6-rest "$BASE"
+else
+  git -C $W checkout -q -B i18n/6-rest
+fi
+git -C $W checkout -q tmp/full -- rhwp-studio rhwp-chrome/build.mjs rhwp-firefox/build.mjs scripts/frontend-extension-dist.test.mjs
+python3 $R/scripts/write-catalog-ts.py $CAT/ko.json $ST/src/i18n/locales/ko.ts ko >/dev/null
+python3 $R/scripts/write-catalog-ts.py $CAT/en.json $ST/src/i18n/locales/en.ts en >/dev/null
+sh $R/scripts/stage-tests.sh 6 $CAT/ko.json | tail -1
+$G add -A
+if git -C $W diff --cached --quiet; then echo "6단계: 변경 없음(이미 devel 에 반영)"; else $G commit -q -F $TMP/msg6.txt; fi
+echo "6단계 커밋: $(git -C $W rev-parse --short HEAD)"
 
 # ---- 검증: 마지막 단계 트리 == 전체 스냅샷 ----
 if [ -n "$(git -C $W diff $FULL HEAD --stat)" ]; then

@@ -16,6 +16,9 @@ import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import tsscan
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from tsscan import korean_literals  # noqa: E402
 
 # (이름, 앞 문맥 정규식, 키 역할)
@@ -30,7 +33,7 @@ SAFE = [
     # `name:` 도 넣는다. 기계 식별자로 쓰는 경우가 많아 처음에는 뺐는데, 실제로 화면에 띄워 보니
     # 스킨 카드 제목·수식 분류·유니코드 블록 이름이 전부 이 속성이었다(49곳, 모두 표시용).
     # 위험(어딘가에서 그 문자열과 비교하는 코드)은 check-comparisons.py 가 잡는다.
-    ('propLabel', re.compile(r'\b(label|caption|hint|tooltip|placeholder|description|name)\s*:\s*$'), 'label'),
+    ('propLabel', re.compile(r'\b(label|labelText|unitText|caption|hint|tooltip|placeholder|description|name)\s*:\s*$'), 'label'),
     ('setAttribute', re.compile(r'setAttribute\(\s*[\'"](?:title|aria-label|placeholder)[\'"]\s*,\s*$'), 'label'),
     ('alertConfirm', re.compile(r'\b(alert|confirm)\(\s*$'), 'message'),
     ('superTitle', re.compile(r'\bsuper\(\s*$'), 'title'),
@@ -252,7 +255,9 @@ def top_level_args(text, with_offsets=False):
 
 
 # [값, 표시글] 짝 배열을 for…of 로 풀어 option·단추를 만드는 자리. 선 종류·적용 범위·번호 모양 목록이 모두 이 꼴이다.
-PAIR_LOOP = re.compile(r'for\s*\(\s*const\s*\[(?P<names>[^\]\n]+)\]\s+of\s+(?P<src>[A-Za-z_$][\w$.]*|\[)')
+PAIR_LOOP = re.compile(
+    r'for\s*\(\s*const\s*\[(?P<names>[^\]\n]+)\]\s+of\s+(?P<src>[A-Za-z_$][\w$.]*|\[)'
+    r'|(?P<src2>[A-Za-z_$][\w$.]*)\.forEach\(\s*\(?\s*\[(?P<names2>[^\]\n]+)\]')
 # 풀린 변수가 가도 되는 표시 자리
 PAIR_DISPLAY = [
     r'\.(?:textContent|innerText|title|placeholder|alt)\s*=\s*[^;\n]*\b%s\b',
@@ -264,7 +269,26 @@ PAIR_MACHINE = (r'\.(?:value|id|htmlFor|className|name)\s*=\s*[^;\n]*\b%s\b|data
                 r'|\b%s\s*(?:===|!==|==|!=)|(?:===|!==|==|!=)\s*%s\b')
 
 
-def pair_loop_labels(src):
+def code_only(body):
+    """문자열·주석을 비운 사본(템플릿의 ${…} 는 코드라 남긴다).
+
+    `const lbl = document.createElement('label')` 의 'label' 을 변수 사용으로 세면
+    짝 배열의 표시글이 '섞임' 으로 판정돼 옮기지 못한다(2026-09-20).
+    """
+    out = list(body)
+    for lit in tsscan.literals(body):
+        for i in range(lit.start, min(lit.end, len(out))):
+            out[i] = ' '
+        if lit.quote == '`':
+            for mm in re.finditer(r'\$\{[^{}]*\}', body[lit.start:lit.end]):
+                for i in range(lit.start + mm.start(), lit.start + mm.end()):
+                    out[i] = body[i]
+    text = ''.join(out)
+    text = re.sub(r'//[^\n]*', lambda mm: ' ' * len(mm.group(0)), text)
+    return re.sub(r'/\*[\s\S]*?\*/', lambda mm: ' ' * len(mm.group(0)), text)
+
+
+def pair_loop_labels(src, allowed=()):
     """짝 배열에서 '표시글' 자리에 있는 문자열 리터럴의 시작 위치 집합.
 
     풀린 이름이 표시 자리로만 가고 나머지 이름은 기계 자리로만 갈 때에만 인정한다.
@@ -272,34 +296,44 @@ def pair_loop_labels(src):
     """
     out = set()
     for m in PAIR_LOOP.finditer(src):
-        names = [n.strip() for n in m.group('names').split(',') if n.strip()]
+        raw_names = m.group('names') or m.group('names2')
+        names = [n.strip() for n in raw_names.split(',') if n.strip()]
         if len(names) < 2:
             continue
         brace = src.find('{', m.end())
         if brace < 0:
             continue
         body = src[brace:matching_paren(src, brace, '{', '}') + 1]
+        helper_alt = '|'.join(re.escape(h) for h in sorted(allowed)) if allowed else None
+        code = code_only(body)
         roles = []
         for name in names:
-            uses = len(re.findall(r'(?<![.\w$])' + re.escape(name) + r'\b', body))
+            uses = len(re.findall(r'(?<![.\w$])' + re.escape(name) + r'\b', code))
             shown = sum(len(re.findall(pat % re.escape(name), body)) for pat in PAIR_DISPLAY)
+            # 검증된 표시 도우미에 넘기는 것도 표시다: this.radioRow(name, value, label, checked).
+            # 다만 한 호출에 값과 표시글이 함께 들어가므로 따로 센다 — 값 자리까지 표시로 보면 안 된다.
+            helper_shown = len(re.findall(r'(?<![\w$.])(?:this\.)?(?:' + helper_alt + r')\([^()]*\b' + re.escape(name) + r'\b', body)) if helper_alt else 0
             machine = len(re.findall(PAIR_MACHINE % tuple([re.escape(name)] * 4), body))
             if uses == 0:
                 roles.append('unused')
-            elif shown and shown + machine >= uses and machine == 0:
-                roles.append('display')
             elif machine and shown == 0:
-                roles.append('machine')
+                roles.append('machine')            # 비교·기계 대입만 — 도우미 인자 매칭은 값 자리일 수 있다
+            elif shown + helper_shown >= uses and machine == 0:
+                roles.append('display')
             else:
                 roles.append('mixed')
-        if 'mixed' in roles or 'display' not in roles:
-            continue
+        if 'display' not in roles:
+            continue        # 표시 자리가 없는 배열은 건드리지 않는다. 섞인 이름의 칸은 아래에서 제외된다.
         # 배열 리터럴 자리 찾기
-        if m.group('src') == '[':
+        source = m.group('src') or m.group('src2')
+        if source == '[':
             open_bracket = src.index('[', m.end() - 1)
         else:
-            var = m.group('src').split('.')[0]
-            decl = re.search(r'(?:const|let|var)\s+' + re.escape(var) + r'\b[^=\n]*=\s*\[', src[:m.start()])
+            var = source.split('.')[0]
+            # 타입 표기에 대괄호·줄바꿈이 들어간다: `const presets: [string, string, () => void][] = [`
+            decl = None
+            for cand in re.finditer(r'(?:const|let|var)\s+' + re.escape(var) + r'\b[^;]*?=\s*\[', src[:m.start()], re.S):
+                decl = cand
             if not decl:
                 continue
             open_bracket = src.rindex('[', decl.start(), decl.end())
@@ -318,6 +352,118 @@ def pair_loop_labels(src):
                 if not stripped or stripped[0] not in "'\"`" or not re.search(r'[가-힣]', stripped):
                     continue
                 out.add(el_open + 1 + inner_offset + (len(item) - len(item.lstrip())))
+    return out
+
+
+# 표시 전용으로 판정된 도우미에 **배열 리터럴**로 넘기는 글자: appendHeaderRow(thead, ['위치', '종류'])
+# 그리고 그런 도우미로만 흘러가는 이름 붙은 글자 배열: const TAB_TYPE_NAMES = ['왼쪽', …]
+def record_value_labels(src, allowed):
+    """`const headLabel: Record<string, string> = { None: '없음', … }` 의 값.
+
+    그 이름이 표시 자리(t() 인자·textContent 대입·검증된 도우미)에서만 읽힐 때만 옮긴다.
+    """
+    out = {}
+    names = '|'.join(re.escape(h) for h in sorted(allowed)) if allowed else None
+    for decl in re.finditer(r'(?:const|let)\s+([A-Za-z_$][\w$]*)\s*:\s*Record<\s*string\s*,\s*string\s*>\s*=\s*\{', src):
+        var = decl.group(1)
+        open_brace = src.index('{', decl.end() - 1)
+        close = matching_paren(src, open_brace, '{', '}')
+        body = src[open_brace + 1:close]
+        if not re.search(r'[가-힣]', body):
+            continue
+        uses = [u for u in re.finditer(r'(?<![.\w$])' + re.escape(var) + r'\b', src) if u.start() != decl.start(1)]
+        if not uses:
+            continue
+        ok = True
+        for u in uses:
+            head = src[max(0, u.start() - 90):u.start()]
+            display = bool(re.search(r'\bt\(|\bi18n[A-Za-z]*\(', head) and head.rstrip().endswith((':', '(', ',')))
+            display = display or bool(re.search(r'\.(?:textContent|innerText|title|placeholder)\s*=\s*[^;\n]*$', head))
+            if names:
+                display = display or bool(re.search(r'(?:this\.)?(?:' + names + r')\([^()]*$', head))
+            if not display:
+                ok = False
+                break
+        if not ok:
+            continue
+        for offset, entry in top_level_args(body, with_offsets=True):
+            m = re.match(r"\s*([A-Za-z_$][\w$]*|'[^']*')\s*:\s*", entry)
+            if not m:
+                continue
+            value = entry[m.end():].strip()
+            if not value or value[0] not in "'`\"" or not re.search(r'[가-힣]', value):
+                continue
+            pos = open_brace + 1 + offset + m.end() + (len(entry[m.end():]) - len(entry[m.end():].lstrip()))
+            out[pos] = f'{slug(var)}.{slug(m.group(1).strip(chr(39)))}'
+    return out
+
+
+def helper_array_labels(src, allowed):
+    """표시 도우미로 가는 배열 리터럴 원소의 시작 위치."""
+    out = set()
+    if not allowed:
+        return out
+    names = '|'.join(re.escape(h) for h in sorted(allowed))
+    for call in re.finditer(r'(?<![\w$.])(?:this\.)?(' + names + r')(?:<[^<>()]*>)?\(', src):
+        open_paren = call.end() - 1
+        close = matching_paren(src, open_paren)
+        for offset, arg in top_level_args(src[open_paren + 1:close], with_offsets=True):
+            stripped = arg.strip()
+            if not stripped.startswith('['):
+                continue
+            el_open = open_paren + 1 + offset + arg.index('[')
+            for inner_offset, item in top_level_args(src[el_open + 1:matching_paren(src, el_open, '[', ']')], with_offsets=True):
+                text = item.strip()
+                base_pos = el_open + 1 + inner_offset + (len(item) - len(item.lstrip()))
+                if text.startswith('['):
+                    # `[['custom', '사용자'], …]` — 한 겹 더 들어간다. 마지막 칸이 표시글이다.
+                    nested_open = base_pos
+                    nested = top_level_args(src[nested_open + 1:matching_paren(src, nested_open, '[', ']')], with_offsets=True)
+                    if nested:
+                        off2, last = nested[-1]
+                        text2 = last.strip()
+                        if text2 and text2[0] in "'`\"" and re.search(r'[가-힣]', text2):
+                            out.add(nested_open + 1 + off2 + (len(last) - len(last.lstrip())))
+                    continue
+                if text and text[0] in "'`\"" and re.search(r'[가-힣]', text):
+                    out.add(base_pos)
+    # 이름 붙은 배열: 그 이름이 표시 자리(도우미 인자·textContent 대입)에서만 읽힐 때
+    for decl in re.finditer(r'(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^;]*?)?=\s*\[', src):
+        var = decl.group(1)
+        open_bracket = src.index('[', decl.end() - 1)
+        close = matching_paren(src, open_bracket, '[', ']')
+        items = top_level_args(src[open_bracket + 1:close], with_offsets=True)
+        if not items or not any(re.search(r'[가-힣]', it.strip()) for _, it in items):
+            continue
+        uses = [u for u in re.finditer(r'(?<![.\w$])' + re.escape(var) + r'\b', src) if u.start() != decl.start(1)]
+        shown = 0
+        for u in uses:
+            head = src[max(0, u.start() - 80):u.start()]
+            if names and re.search(r'(?:this\.)?(?:' + names + r')\(\s*[^()]*$', head):
+                shown += 1
+            elif re.search(r'\.(?:textContent|innerText|title|placeholder)\s*=\s*[^;\n]*$', head):
+                shown += 1
+            else:
+                # `sampleLines.forEach((text) => { … text … })` — 푼 이름이 표시 자리로만 가면 표시다
+                tail = src[u.end():u.end() + 400]
+                fm = re.match(r'\.forEach\(\s*\(?\s*([A-Za-z_$][\w$]*)', tail)
+                if not fm:
+                    continue
+                item = fm.group(1)
+                open_brace = src.find('{', u.end())
+                if open_brace < 0:
+                    continue
+                loop_body = src[open_brace:matching_paren(src, open_brace, '{', '}') + 1]
+                item_uses = len(re.findall(r'(?<![.\w$])' + re.escape(item) + r'\b', loop_body)) - 1
+                item_shown = sum(len(re.findall(pat % re.escape(item), loop_body)) for pat in PAIR_DISPLAY)
+                if item_shown and item_shown >= item_uses:
+                    shown += 1
+        if not uses or shown < len(uses):
+            continue
+        for inner_offset, item in items:
+            text = item.strip()
+            if text and text[0] in "'`\"" and re.search(r'[가-힣]', text):
+                out.add(open_bracket + 1 + inner_offset + (len(item) - len(item.lstrip())))
     return out
 
 
@@ -456,7 +602,16 @@ def main():
                     covered[other.start] = role
 
         # 짝 배열(`for (const [val, lbl] of [['0','선 없음'], …])`)의 표시글 자리
-        for start in pair_loop_labels(src):
+        for start in pair_loop_labels(src, allowed_helpers):
+            covered.setdefault(start, 'label')
+
+        # 표시 도우미로 넘기는 배열 리터럴·이름 붙은 표시용 배열
+        for start in helper_array_labels(src, allowed_helpers):
+            covered.setdefault(start, 'label')
+
+        # 지역 Record<string, string> 표의 값
+        record_keys = record_value_labels(src, allowed_helpers)
+        for start in record_keys:
             covered.setdefault(start, 'label')
 
         # 명령 정의 공장(`function stub(id: string, label: string): CommandDef`)의 label 인자는 명령 팔레트·
@@ -619,6 +774,8 @@ def main():
                 stem = f'{base}.tab.{tab_id}'
             if lit.start in factory_keys:
                 stem = factory_keys[lit.start]
+            elif lit.start in record_keys:
+                stem = f'{base}.{record_keys[lit.start]}'
             key = stem
             if catalog.get(key, text) != text or added.get(key, text) != text:
                 key = f'{stem}.{fingerprint(text)}'

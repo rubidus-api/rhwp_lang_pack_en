@@ -24,4 +24,8 @@ if [ "$stage" -ge 3 ]; then
   # 3단계 카탈로그에는 command 키가 없으므로 command 소스 단정은 자연히 그대로 남는다.
   python3 "$root/scripts/retarget-source-assertions.py" "$tests" "$catalog" --write
 fi
+if [ "$stage" -ge 6 ]; then
+  # ID 를 먼저 분리한 함수(zoomPercentShortcutTitle)의 인자를 쓰는 단정 — 도구가 다루지 못해 손으로 적는다.
+  python3 "$root/scripts/retarget-hand-tests.py" "$tests" > /dev/null
+fi
 echo "stage-tests: 단계 $stage 상태"
